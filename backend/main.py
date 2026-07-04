@@ -26,6 +26,10 @@ SERVICE_PORTAL_MAP = {
         "title": "Voter ID Application",
         "url": f"{BASE_URL}/dummy_forms/voter_id.html",
     },
+    "family_data": {
+        "title": "Family Data Collection Form",
+        "url": f"{BASE_URL}/dummy_forms/family_data_collection.html",
+    },
 }
 
 
@@ -65,6 +69,7 @@ def _get_or_open_tab(context, url):
     """Find an existing tab already on this URL, or open a new one."""
     for p_obj in context.pages:
         if p_obj.url == url or p_obj.url.startswith(url):
+            p_obj.goto(url) # Reset form state back to step 1
             return p_obj
     page = context.new_page()
     page.goto(url)
@@ -138,39 +143,68 @@ def run_playwright_fill(url, data):
             page.bring_to_front()
             page.wait_for_load_state("domcontentloaded")
 
-            for field_id, value in data.items():
-                if value is None or value == "":
-                    continue
-                locator = page.locator(f"#{field_id}")
-                if locator.count() == 0:
-                    print(f"Skipping unknown field id: {field_id}")
-                    continue
-
-                tag = locator.evaluate("el => el.tagName.toLowerCase()")
-                type_attr = (locator.evaluate("el => el.type || ''") or "").lower()
-
-                print(f"Filling #{field_id} ({tag}/{type_attr}) = {value!r}")
-
-                if tag == "select":
-                    try:
-                        locator.select_option(label=str(value))
-                    except Exception:
+            # Multi-page filling loop: fill all visible fields, then click next_btn if visible,
+            # and repeat until all fields are filled. Works for both single and multi-page forms.
+            filled_fields = set()
+            max_attempts = 15
+            
+            for attempt in range(max_attempts):
+                unfilled_visible_fields = []
+                for field_id, value in data.items():
+                    if field_id in filled_fields:
+                        continue
+                    if value is None or value == "":
+                        filled_fields.add(field_id)
+                        continue
+                    
+                    locator = page.locator(f"#{field_id}")
+                    if locator.count() > 0 and locator.first.is_visible():
+                        unfilled_visible_fields.append((field_id, value, locator.first))
+                
+                # Fill all currently visible fields
+                for field_id, value, element in unfilled_visible_fields:
+                    tag = element.evaluate("el => el.tagName.toLowerCase()")
+                    type_attr = (element.evaluate("el => el.type || ''") or "").lower()
+                    print(f"Filling #{field_id} ({tag}/{type_attr}) = {value!r}")
+                    
+                    if tag == "select":
                         try:
-                            locator.select_option(value=str(value))
-                        except Exception as e:
-                            print(f"  Could not select option for #{field_id}: {e}")
-                elif type_attr in ("checkbox", "radio"):
-                    if str(value).lower() in ("yes", "true", "1"):
-                        locator.check()
+                            element.select_option(label=str(value))
+                        except Exception:
+                            try:
+                                element.select_option(value=str(value))
+                            except Exception as e:
+                                print(f"  Could not select option for #{field_id}: {e}")
+                    elif type_attr in ("checkbox", "radio"):
+                        if str(value).lower() in ("yes", "true", "1", "accepted", "agree", "on"):
+                            element.check()
+                    else:
+                        element.click()
+                        element.fill("")
+                        element.press_sequentially(str(value), delay=TYPING_DELAY_MS)
+                    
+                    filled_fields.add(field_id)
+                
+                # Check if we are done
+                remaining = [f for f in data.keys() if f not in filled_fields]
+                if not remaining:
+                    print("All fields filled! Ready to submit.")
+                    break
+                
+                # If there are still unfilled fields, check if we need to navigate to the next page
+                next_btn = page.locator("#next_btn")
+                if next_btn.count() > 0 and next_btn.first.is_visible():
+                    print("Clicking #next_btn to go to the next page...")
+                    next_btn.first.click()
+                    page.wait_for_timeout(600) # wait for step transition animation
                 else:
-                    locator.click()
-                    locator.fill("")
-                    locator.press_sequentially(str(value), delay=TYPING_DELAY_MS)
+                    print("No visible #next_btn found but fields remain unfilled. Breaking...")
+                    break
 
             submit_btn = page.locator("#submit_btn")
-            if submit_btn.count() > 0:
+            if submit_btn.count() > 0 and submit_btn.first.is_visible():
                 print("Clicking #submit_btn...")
-                submit_btn.click()
+                submit_btn.first.click()
 
             print("Automation completed successfully.")
 

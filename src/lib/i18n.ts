@@ -74,14 +74,14 @@ export const PHRASES = {
     bn: (l: string) => `${l} বেছে নেওয়া হয়েছে।`,
   },
   formGreeting: {
-    en: "Which service? Say Ration Card or Voter ID.",
-    hi: "कौन सी सेवा? राशन कार्ड या वोटर आईडी कहें।",
-    bn: "কোন পরিষেবা? রেশন কার্ড বা ভোটার আইডি বলুন।",
+    en: "Which service? Say Ration Card, Voter ID, or Family Form.",
+    hi: "कौन सी सेवा? राशन कार्ड, वोटर आईडी, या फैमिली फॉर्म कहें।",
+    bn: "কোন পরিষেবা? রেশন কার্ড, ভোটার আইডি, বা ফ্যামিলি ফর্ম বলুন।",
   },
   formChoiceAgain: {
-    en: "Say Ration Card or Voter ID.",
-    hi: "राशन कार्ड या वोटर आईडी कहें।",
-    bn: "রেশন কার্ড বা ভোটার আইডি বলুন।",
+    en: "Say Ration Card, Voter ID, or Family Form.",
+    hi: "राशन कार्ड, वोटर आईडी, या फैमिली फॉर्म कहें।",
+    bn: "রেশন কার্ড, ভোটার আইডি, বা ফ্যামিলি ফর্ম বলুন।",
   },
   loadingSchema: {
     en: (title: string) => `Opening ${title} form…`,

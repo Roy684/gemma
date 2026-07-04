@@ -74,7 +74,12 @@ const SERVICES: ServiceDef[] = [
   {
     key: "voter_id",
     label: "Voter ID",
-    match: /\b(voter\s*id|voter\s*card|voter)\b|मतदाता\s*पहचान\s*पत्र|मतदाता|ভোটার\s*আইডি|ভোটার/i,
+    match: /\b(voter\s*id|voter\s*card|voter)\b|मतदाता\s*पहचान\s*पत्र|मतदाता|वोटर\s*कार्ड|वोटर|ভোটার\s*আইডি|ভোটার\s*কার্ড|ভোটার/i,
+  },
+  {
+    key: "family_data",
+    label: "Family Data Collection",
+    match: /\b(family\s*data|family\s*registry|family\s*collection|family\s*form|family|registry|form)\b|परिवार\s*पंजीकरण|परिवार|फैमिली\s*फॉर्म|फैमिली|পারিবারিক\s*তথ্য|পরিবার|ফ্যামিলি\s*ফর্ম|ফ্যামিলি/i,
   },
 ];
 
@@ -1646,7 +1651,7 @@ JSON:`;
             ) : !hasActiveForm ? (
               /* Government service picker — the URL and schema for each are
                  resolved by the backend, not hardcoded here. */
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
                 {SERVICES.map((s, i) => (
                   <button
                     key={s.key}
