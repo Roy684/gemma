@@ -13,6 +13,7 @@ import {
   parseLanguage,
   pickVoice,
 } from "@/lib/i18n";
+import { playCloudTts, stopCloudTts } from "@/lib/tts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,188 +21,83 @@ type Phase =
   | "init"             // model loading
   | "ready"            // model loaded, waiting for user
   | "await_language"   // asking which language (en / hi / bn)
-  | "await_form"       // said greeting, listening for form choice
-  | "collecting"       // asking & collecting fields one by one
+  | "await_form"       // said greeting, listening for which government service
+  | "loading_schema"   // Playwright is extracting the live form's schema
+  | "collecting"       // asking & collecting fields one by one (raw speech only)
+  | "translating"      // one-time batch translation of all collected answers
   | "await_confirm"    // summarised, listening for yes/no
   | "correction_field" // listening for which field to correct
   | "correction_value" // listening for the corrected value
   | "done";            // session complete
 
-type Field = { id: string; label: string; placeholder: string };
-type Section = { title: string; fields: Field[] };
-type FormDef = {
-  id: number;
-  title: string;
-  desc: string;
-  icon: string;
-  gradient: string;
-  sections: Section[];
+// A field as extracted from a live government (or dummy) form's schema.
+type Field = {
+  id: string;
+  label: string;
+  type: string;
+  required: boolean;
+  placeholder?: string;
+  options?: string[];
 };
 type ChatMsg = { id: string; role: "agent" | "user"; text: string };
 
 let _mid = 0;
 const uid = () => `m${++_mid}`;
 
-// ─── Form Definitions ─────────────────────────────────────────────────────────
+// Deterministic fake waveform bar heights (%) derived from a message id, so
+// each voice-note bubble looks distinct but never needs real audio data.
+function pseudoWaveform(seed: string, bars = 18): number[] {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const out: number[] = [];
+  for (let i = 0; i < bars; i++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    out.push(25 + (h % 75)); // 25%–100% height
+  }
+  return out;
+}
 
-const FORMS: FormDef[] = [
+// ─── Government Service Directory ──────────────────────────────────────────────
+// This is voice-matching metadata only. The backend owns the service -> URL
+// mapping (SERVICE_PORTAL_MAP in backend/main.py) and Playwright extracts the
+// actual field schema at runtime — nothing about individual fields is
+// hardcoded here anymore.
+
+type ServiceDef = { key: string; label: string; match: RegExp };
+
+const SERVICES: ServiceDef[] = [
   {
-    id: 1,
-    title: "Personal Registration",
-    desc: "Identity, contact & address details",
-    icon: "fa-id-card",
-    gradient: "from-blue-600 to-indigo-600",
-    sections: [
-      {
-        title: "Identity",
-        fields: [
-          { id: "full_name", label: "Full Name", placeholder: "Enter your full name" },
-          { id: "dob", label: "Date of Birth", placeholder: "DD / MM / YYYY" },
-          { id: "gender", label: "Gender", placeholder: "Male / Female / Other" },
-        ],
-      },
-      {
-        title: "Contact",
-        fields: [
-          { id: "email", label: "Email Address", placeholder: "you@example.com" },
-          { id: "phone", label: "Phone Number", placeholder: "+91 98765 43210" },
-        ],
-      },
-      {
-        title: "Address",
-        fields: [
-          { id: "street", label: "Street / Area", placeholder: "House no., Street, Locality" },
-          { id: "city", label: "City", placeholder: "Enter your city" },
-          { id: "pincode", label: "PIN Code", placeholder: "6-digit PIN" },
-        ],
-      },
-    ],
+    key: "ration_card",
+    label: "Ration Card",
+    match: /\b(ration\s*card|ration)\b|राशन\s*कार्ड|राशन|রেশন\s*কার্ড|রেশন/i,
   },
   {
-    id: 2,
-    title: "Medical Appointment",
-    desc: "Patient information & booking request",
-    icon: "fa-stethoscope",
-    gradient: "from-emerald-600 to-teal-600",
-    sections: [
-      {
-        title: "Patient Details",
-        fields: [
-          { id: "patient_name", label: "Patient Name", placeholder: "Full name of patient" },
-          { id: "age", label: "Age", placeholder: "Patient's age" },
-          { id: "blood_group", label: "Blood Group", placeholder: "e.g. A+, B−, O+" },
-        ],
-      },
-      {
-        title: "Medical Information",
-        fields: [
-          { id: "condition", label: "Condition / Symptoms", placeholder: "Brief description" },
-          { id: "doctor", label: "Preferred Doctor", placeholder: "Doctor name or specialty" },
-          { id: "appt_date", label: "Preferred Date", placeholder: "DD / MM / YYYY" },
-        ],
-      },
-      {
-        title: "Insurance",
-        fields: [
-          { id: "insurance_id", label: "Insurance ID", placeholder: "Policy number" },
-          { id: "insurer", label: "Provider", placeholder: "Insurance company name" },
-        ],
-      },
-    ],
-  },
-  {
-    id: 3,
-    title: "Job Application",
-    desc: "Employment application & qualifications",
-    icon: "fa-briefcase",
-    gradient: "from-amber-600 to-orange-600",
-    sections: [
-      {
-        title: "Applicant",
-        fields: [
-          { id: "app_name", label: "Full Name", placeholder: "Your legal full name" },
-          { id: "app_email", label: "Email", placeholder: "professional@email.com" },
-          { id: "app_phone", label: "Phone", placeholder: "+91 XXXXX XXXXX" },
-        ],
-      },
-      {
-        title: "Experience",
-        fields: [
-          { id: "position", label: "Position Applied", placeholder: "Job title or role" },
-          { id: "experience", label: "Years of Experience", placeholder: "e.g. 3 years" },
-          { id: "company", label: "Current Company", placeholder: "Company name" },
-        ],
-      },
-      {
-        title: "Qualifications",
-        fields: [
-          { id: "education", label: "Highest Education", placeholder: "Degree & institution" },
-          { id: "skills", label: "Key Skills", placeholder: "e.g. React, Python, SQL" },
-        ],
-      },
-    ],
-  },
-  {
-    id: 4,
-    title: "Travel & Visa",
-    desc: "Travel application & visa request form",
-    icon: "fa-passport",
-    gradient: "from-purple-600 to-pink-600",
-    sections: [
-      {
-        title: "Applicant",
-        fields: [
-          { id: "trav_name", label: "Full Name", placeholder: "Name as on passport" },
-          { id: "passport_no", label: "Passport No.", placeholder: "e.g. P1234567" },
-          { id: "nationality", label: "Nationality", placeholder: "Country of citizenship" },
-        ],
-      },
-      {
-        title: "Travel Details",
-        fields: [
-          { id: "destination", label: "Destination", placeholder: "Country to visit" },
-          { id: "depart_date", label: "Departure Date", placeholder: "DD / MM / YYYY" },
-          { id: "return_date", label: "Return Date", placeholder: "DD / MM / YYYY" },
-          { id: "duration", label: "Duration of Stay", placeholder: "e.g. 10 days" },
-        ],
-      },
-      {
-        title: "Purpose & Accommodation",
-        fields: [
-          { id: "purpose", label: "Purpose of Visit", placeholder: "Tourism / Business / Study" },
-          { id: "accommodation", label: "Accommodation", placeholder: "Hotel or host address" },
-        ],
-      },
-    ],
+    key: "voter_id",
+    label: "Voter ID",
+    match: /\b(voter\s*id|voter\s*card|voter)\b|मतदाता\s*पहचान\s*पत्र|मतदाता|ভোটার\s*আইডি|ভোটার/i,
   },
 ];
 
-// ─── Dialogue Utilities ───────────────────────────────────────────────────────
-
-function flatFields(form: FormDef): Field[] {
-  return form.sections.flatMap((s) => s.fields);
-}
-
-function parseFormNum(text: string): number | null {
-  const t = text.toLowerCase();
-  if (/\b(1|one|first|personal|registration|एक|पहला|প্রথম|ek|ekota)\b/.test(t)) return 1;
-  if (/\b(2|two|second|medical|appointment|दो|दूसरा|দুই|দ্বিতীয়|dui)\b/.test(t)) return 2;
-  if (/\b(3|three|third|job|employment|application|तीन|तीसरा|তিন|তৃতীয়|tin)\b/.test(t)) return 3;
-  if (/\b(4|four|fourth|travel|visa|passport|चार|चौथा|চার|চতুর্থ|char)\b/.test(t)) return 4;
+function parseServiceKey(text: string): ServiceDef | null {
+  for (const s of SERVICES) {
+    if (s.match.test(text)) return s;
+  }
   return null;
 }
 
+// ─── Dialogue Utilities ───────────────────────────────────────────────────────
+
 function buildSummary(
-  form: FormDef,
+  title: string,
+  fields: Field[],
   data: Record<string, string>,
   lang: Lang
 ): string {
-  const fields = flatFields(form);
   const np = PHRASES.notProvided[lang];
   const lines = fields
     .map((f) => `${f.label}: ${data[f.id] || np}`)
     .join(". ");
-  return PHRASES.summaryIntro[lang](form.title, lines);
+  return PHRASES.summaryIntro[lang](title, lines);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -223,11 +119,23 @@ export default function EchoJSONApp() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
+  // Session ID — incremented on every reset to invalidate stale recorder callbacks
+  const sessionIdRef = useRef(0);
+  const cloudAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // ── Dialogue state refs (used inside callbacks – no stale closures) ────────
   const phaseRef = useRef<Phase>("init");
   const langRef = useRef<Lang | null>(null);
-  const formIdRef = useRef<number | null>(null);
+  const serviceKeyRef = useRef<string | null>(null);
+  const serviceTitleRef = useRef<string>("");
+  // Portal URL for the currently active service, returned by /api/schema.
+  const targetUrlRef = useRef<string>("");
+  // Field schema extracted live from the target form by the Playwright backend.
+  const schemaFieldsRef = useRef<Field[]>([]);
+  // Raw, untranslated spoken answers collected turn-by-turn (native script).
+  // Translated to English in ONE batch call when collection finishes —
+  // not per turn — to keep the live conversation fast.
+  const rawDataRef = useRef<Record<string, string>>({});
   const dataRef = useRef<Record<string, string>>({});
   const fieldIdxRef = useRef<number>(0);
   const corrFieldRef = useRef<Field | null>(null);
@@ -237,7 +145,8 @@ export default function EchoJSONApp() {
   // ── React state (for rendering) ────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>("init");
   const [lang, setLang] = useState<Lang | null>(null);
-  const [formId, setFormId] = useState<number | null>(null);
+  const [serviceTitle, setServiceTitle] = useState<string>("");
+  const [schemaFields, setSchemaFields] = useState<Field[]>([]);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [fieldIdx, setFieldIdx] = useState(0);
   const [corrFieldId, setCorrFieldId] = useState<string | null>(null);
@@ -264,6 +173,36 @@ export default function EchoJSONApp() {
   // ── TTS ─────────────────────────────────────────────────────────────────────
 
   const speakText = useCallback((text: string, speakLang: Lang, onDone?: () => void) => {
+    const sessionId = sessionIdRef.current;
+
+    // Bengali: browser voices are unreliable/poor on Windows — use cloud Google Translate TTS proxy
+    if (speakLang === "bn") {
+      window.speechSynthesis?.cancel();
+      stopCloudTts(cloudAudioRef);
+      setAgentSpeaking(true);
+
+      let spoken = text.replace(/\{[^}]*\}/g, "").trim();
+      // Lowercase to prevent Google TTS from spelling out acronyms letter-by-letter
+      spoken = spoken.toLowerCase();
+      if (!spoken) {
+        setAgentSpeaking(false);
+        onDone?.();
+        return;
+      }
+
+      const finish = () => {
+        setAgentSpeaking(false);
+        if (sessionIdRef.current === sessionId) {
+          onDone?.();
+        }
+      };
+
+      playCloudTts(spoken, "bn", cloudAudioRef)
+        .then(finish)
+        .catch(finish);
+      return;
+    }
+
     if (!window.speechSynthesis) {
       onDone?.();
       return;
@@ -276,8 +215,8 @@ export default function EchoJSONApp() {
     }
 
     const utt = new SpeechSynthesisUtterance(spoken);
-    utt.rate = speakLang === "bn" ? 0.95 : 1.05;
-    utt.lang = speakLang === "en" ? "en-IN" : speakLang === "hi" ? "hi-IN" : "bn-IN";
+    utt.rate = 1.05;
+    utt.lang = speakLang === "en" ? "en-IN" : "hi-IN";
 
     const voices =
       voicesRef.current.length > 0
@@ -294,7 +233,10 @@ export default function EchoJSONApp() {
       if (finished) return;
       finished = true;
       setAgentSpeaking(false);
-      onDone?.();
+      // Guard: only execute callback if session is still active and has not been reset
+      if (sessionIdRef.current === sessionId) {
+        onDone?.();
+      }
     };
 
     setAgentSpeaking(true);
@@ -313,19 +255,27 @@ export default function EchoJSONApp() {
   /** Speak multiple lines sequentially, each in its own language voice */
   const speakSequence = useCallback(
     (parts: { text: string; lang: Lang }[], onDone?: () => void) => {
+      const sessionId = sessionIdRef.current;
       if (!parts.length) {
-        onDone?.();
+        if (sessionIdRef.current === sessionId) {
+          onDone?.();
+        }
         return;
       }
       let i = 0;
       const next = () => {
+        if (sessionIdRef.current !== sessionId) return;
         if (i >= parts.length) {
           onDone?.();
           return;
         }
         const part = parts[i++];
         speakText(part.text, part.lang, () => {
-          window.setTimeout(next, 150);
+          window.setTimeout(() => {
+            if (sessionIdRef.current === sessionId) {
+              next();
+            }
+          }, 150);
         });
       };
       next();
@@ -371,10 +321,7 @@ export default function EchoJSONApp() {
   // ── Transcription ────────────────────────────────────────────────────────────
 
   const transcribeAudio = useCallback(
-    async (
-      chunks: Blob[],
-      options?: { toEnglish?: boolean; onToken?: (partial: string) => void }
-    ): Promise<string> => {
+    async (chunks: Blob[]): Promise<string> => {
       const processor = processorRef.current;
       const model = modelRef.current;
       const Streamer = StreamerRef.current;
@@ -398,9 +345,16 @@ export default function EchoJSONApp() {
         const res = await offCtx.startRendering();
         const f32 = res.getChannelData(0);
 
-        const instruction = options?.toEnglish
-          ? "Transcribe the audio and translate it to English. Return ONLY the English text, no annotations or commentary."
-          : "Transcribe the audio exactly. Return ONLY the verbatim spoken words, no annotations or commentary.";
+        // Fix 1: produce output in the user's chosen language/script so chat
+        // bubbles always display text the user can read.
+        const curLang = langRef.current;
+        const scriptHint =
+          curLang === "hi"
+            ? "in Hindi using Devanagari script"
+            : curLang === "bn"
+              ? "in Bengali using Bengali (Bangla) script"
+              : "in English";
+        const instruction = `Transcribe the audio exactly ${scriptHint}. Return ONLY the verbatim spoken words, no annotations or commentary.`;
 
         const msgs = [
           {
@@ -424,7 +378,6 @@ export default function EchoJSONApp() {
           skip_special_tokens: true,
           callback_function: (chunk: string) => {
             out += chunk;
-            options?.onToken?.(out.trim());
           },
         });
         await model.generate({
@@ -443,7 +396,7 @@ export default function EchoJSONApp() {
     []
   );
 
-  /** Translate spoken text to English via Gemma (text-only fallback) */
+  /** Translate spoken text to English via Gemma (text-only) */
   const translateToEnglish = useCallback(async (text: string): Promise<string> => {
     const processor = processorRef.current;
     const model = modelRef.current;
@@ -484,6 +437,243 @@ export default function EchoJSONApp() {
     }
   }, []);
 
+  /**
+   * Uses Gemma text inference to extract only the relevant entity value from a
+   * natural-language user response for a given form field.
+   * e.g. "my name is Mahika" → "Mahika" for field label "Full Name".
+   * Streams extracted tokens into the live form field via onToken.
+   * Fix #3: always returns English Roman-script value, regardless of input language.
+   */
+  /**
+   * Fix 2: extractEntity now accepts an optional list of valid options.
+   * When options are provided (dropdown / radio / select fields), the prompt
+   * tells Gemma to pick exactly one option from the list — preventing blank
+   * or invalid values that the form rejects.
+   */
+  const extractEntity = useCallback(
+    async (
+      rawText: string,
+      fieldLabel: string,
+      options?: string[],
+      onToken?: (partial: string) => void,
+      placeholder?: string
+    ): Promise<string> => {
+      const processor = processorRef.current;
+      const model = modelRef.current;
+      const Streamer = StreamerRef.current;
+      if (!processor || !model || !Streamer) return translateToEnglish(rawText);
+
+      try {
+        // Build a prompt that is option-aware when the field has a fixed list
+        let promptContent: string;
+        if (options && options.length > 0) {
+          const optionList = options.map((o) => `"${o}"`).join(", ");
+          promptContent = `The user is answering the form field "${fieldLabel}". The ONLY valid options are: ${optionList}.\nLook at the user's response and select the SINGLE best matching option. Return ONLY that exact option text, nothing else.\n\nUser said: "${rawText}"\n\nSelected option:`;
+        } else {
+          const formatHint = placeholder ? ` It must strictly match this format: ${placeholder}.` : "";
+          promptContent = `Extract only the value for the field "${fieldLabel}" from this user response. Return ONLY that value in English using Roman script. No extra words, no punctuation.${formatHint}\n\nUser said: "${rawText}"\n\nExtracted value:`;
+        }
+
+        const msgs = [{ role: "user", content: promptContent }];
+        const prompt = processor.apply_chat_template(msgs, {
+          add_generation_prompt: true,
+        });
+        const inputs = await processor(prompt, null, null, {
+          add_special_tokens: false,
+        });
+        let out = "";
+        const streamer = new Streamer(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk: string) => {
+            out += chunk;
+            onToken?.(out.trim());
+          },
+        });
+        await model.generate({
+          ...inputs,
+          max_new_tokens: options && options.length > 0 ? 15 : 30,
+          temperature: 0.05,
+          do_sample: false,
+          streamer,
+        });
+        return out.trim() || rawText;
+      } catch {
+        return rawText;
+      }
+    },
+    [translateToEnglish]
+  );
+
+  /**
+   * Batch-translates every collected raw answer to English in ONE Gemma call,
+   * instead of translating/extracting after every single turn. This is the
+   * only translation step in the whole flow — it runs once, right after the
+   * last field is answered and before the confirmation summary is shown.
+   */
+  const translateAndExtractEntities = useCallback(
+    async (
+      fields: Field[],
+      raw: Record<string, string>
+    ): Promise<Record<string, string>> => {
+      const processor = processorRef.current;
+      const model = modelRef.current;
+      const Streamer = StreamerRef.current;
+
+      const fallbackPerField = async (): Promise<Record<string, string>> => {
+        const result: Record<string, string> = {};
+        for (const f of fields) {
+          const spoken = raw[f.id] ?? "";
+          result[f.id] = spoken
+            ? await extractEntity(spoken, f.label, f.options, undefined, f.placeholder)
+            : "";
+        }
+        return result;
+      };
+
+      if (!processor || !model || !Streamer) return fallbackPerField();
+
+      try {
+        const fieldLines = fields
+          .map((f, i) => {
+            const spoken = raw[f.id] ?? "";
+            const optsPart =
+              f.options && f.options.length > 0
+                ? ` Valid options: ${f.options.map((o) => `"${o}"`).join(", ")}.`
+                : "";
+            const formatHint = f.placeholder ? ` Format required: ${f.placeholder}.` : "";
+            return `${i + 1}. id: "${f.id}", label: "${f.label}", spoken answer: "${spoken}".${optsPart}${formatHint}`;
+          })
+          .join("\n");
+
+        const promptContent = `You are helping fill an English government form. Below are form fields with what the applicant spoke aloud, possibly in Hindi or Bengali. For each field, output the correct value to enter in English (Roman script). If "Valid options" are given for a field, output EXACTLY one of those options, matching the applicant's intent. Respond with STRICT JSON only — a single object mapping each field id to its English value. No markdown, no code fences, no commentary.
+
+Fields:
+${fieldLines}
+
+JSON:`;
+
+        const msgs = [{ role: "user", content: promptContent }];
+        const prompt = processor.apply_chat_template(msgs, {
+          add_generation_prompt: true,
+        });
+        const inputs = await processor(prompt, null, null, {
+          add_special_tokens: false,
+        });
+
+        let out = "";
+        const streamer = new Streamer(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk: string) => {
+            out += chunk;
+          },
+        });
+        await model.generate({
+          ...inputs,
+          max_new_tokens: Math.max(200, fields.length * 40),
+          temperature: 0.05,
+          do_sample: false,
+          streamer,
+        });
+
+        const match = out.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error("No JSON object found in batch translation output");
+        const parsed = JSON.parse(match[0]);
+
+        const result: Record<string, string> = {};
+        for (const f of fields) {
+          const v = parsed[f.id];
+          result[f.id] =
+            typeof v === "string" && v.trim() ? v.trim() : raw[f.id] ?? "";
+        }
+        return result;
+      } catch (err) {
+        console.warn(
+          "Batch entity translation failed, falling back to per-field extraction",
+          err
+        );
+        return fallbackPerField();
+      }
+    },
+    [extractEntity]
+  );
+
+  /**
+   * Fix: Uses Gemma to intelligently understand long confirmations and 
+   * fuzzy field names (e.g. "Father's name" -> "father_husband_name").
+   */
+  const analyzeConfirmation = useCallback(
+    async (
+      rawText: string,
+      fields: Field[]
+    ): Promise<{ isConfirm: boolean; fieldId: string | null }> => {
+      const processor = processorRef.current;
+      const model = modelRef.current;
+      const Streamer = StreamerRef.current;
+
+      const fallback = () => ({
+        isConfirm: isYes(rawText, langRef.current ?? "en"),
+        fieldId: matchFieldMultilingual(rawText, fields)?.id ?? null,
+      });
+
+      if (!processor || !model || !Streamer) return fallback();
+
+      try {
+        const fieldLines = fields
+          .map((f) => `- id: "${f.id}", label: "${f.label}"`)
+          .join("\n");
+
+        const promptContent = `The user is reviewing a form. Analyze their spoken response and output STRICT JSON with two keys:
+"confirm": boolean (true if they are confirming/agreeing/saying yes to everything, false if they are rejecting/saying no/asking to change something)
+"fieldId": string or null (if they want to change a field, output the exact 'id' of the matching field from the list below. Otherwise output null).
+
+Fields:
+${fieldLines}
+
+User said: "${rawText}"
+
+JSON:`;
+
+        const msgs = [{ role: "user", content: promptContent }];
+        const prompt = processor.apply_chat_template(msgs, {
+          add_generation_prompt: true,
+        });
+        const inputs = await processor(prompt, null, null, {
+          add_special_tokens: false,
+        });
+
+        let out = "";
+        const streamer = new Streamer(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk: string) => {
+            out += chunk;
+          },
+        });
+        await model.generate({
+          ...inputs,
+          max_new_tokens: 60,
+          temperature: 0.1,
+          do_sample: false,
+          streamer,
+        });
+
+        const match = out.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error("No JSON object found");
+        const parsed = JSON.parse(match[0]);
+        return {
+          isConfirm: !!parsed.confirm,
+          fieldId: typeof parsed.fieldId === "string" ? parsed.fieldId : null,
+        };
+      } catch (err) {
+        console.warn("Confirmation analysis failed", err);
+        return fallback();
+      }
+    },
+    []
+  );
+
   // ── Forward refs to break circular dependency ──────────────────────────────
   const processTxRef = useRef<
     ((rawText: string, englishText: string) => Promise<void>) | null
@@ -495,6 +685,7 @@ export default function EchoJSONApp() {
 
   const startRecording = useCallback(async () => {
     if (!modelLoadedRef.current) return;
+    const sessionId = sessionIdRef.current; // capture — if reset fires, this won't match
     cancelAnimationFrame(rafRef.current);
     setIsRecording(true);
     audioChunksRef.current = [];
@@ -528,44 +719,51 @@ export default function EchoJSONApp() {
     };
 
     recorder.onstop = async () => {
+      // Fix #1: guard against session reset — if session changed, discard result
+      if (sessionIdRef.current !== sessionId) return;
+
       cancelAnimationFrame(rafRef.current);
       setIsRecording(false);
       setIsTranscribing(true);
 
-      const fieldId = activeFieldIdRef.current;
-      const needsEnglish =
-        !!fieldId &&
-        (phaseRef.current === "collecting" ||
-          phaseRef.current === "correction_value");
-
-      // Transcribe; stream English directly into form field when collecting
-      const rawText = await transcribeAudio(audioChunksRef.current, {
-        toEnglish: needsEnglish,
-        onToken: fieldId
-          ? (partial) => {
-              setFormData((prev) => ({ ...prev, [fieldId]: partial }));
-            }
-          : undefined,
-      });
-
+      // Transcribe verbatim in the user's native language. This is the only
+      // Gemma call that runs on every turn — no per-turn translation or
+      // entity extraction anymore, to keep the live conversation fast.
+      const rawText = await transcribeAudio(audioChunksRef.current);
+      if (sessionIdRef.current !== sessionId) return; // re-check after async
       addMsg("user", rawText);
 
-      // Form fields are always stored in English (transcribe already translated when needsEnglish)
+      // During the main collection loop, the raw spoken answer is stored
+      // as-is (see processTranscription's "collecting" branch) and every
+      // field is translated/extracted together in ONE batch call once the
+      // last field is answered — not here, not per turn.
+      //
+      // A one-off correction after confirmation is the only case where we
+      // still extract immediately: it's a single field, not part of the
+      // fast conversational loop, and the summary needs to reflect it right
+      // away.
       let englishText = rawText;
+      const fieldId = activeFieldIdRef.current;
       if (
-        needsEnglish &&
-        langRef.current &&
-        langRef.current !== "en" &&
+        phaseRef.current === "correction_value" &&
+        fieldId &&
         rawText &&
         rawText !== "[unclear]"
       ) {
-        // Fallback: refine translation if audio step returned non-Latin script
-        if (/[\u0900-\u097F\u0980-\u09FF]/.test(rawText)) {
-          englishText = await translateToEnglish(rawText);
-          if (fieldId) {
-            setFormData((prev) => ({ ...prev, [fieldId]: englishText }));
-          }
-        }
+        const field = schemaFieldsRef.current.find((f) => f.id === fieldId);
+        englishText = await extractEntity(
+          rawText,
+          field?.label ?? fieldId,
+          field?.options,
+          (partial) => {
+            if (sessionIdRef.current === sessionId) {
+              setFormData((prev) => ({ ...prev, [fieldId]: partial }));
+            }
+          },
+          field?.placeholder
+        );
+        if (sessionIdRef.current !== sessionId) return;
+        setFormData((prev) => ({ ...prev, [fieldId]: englishText }));
       }
 
       setIsTranscribing(false);
@@ -616,16 +814,55 @@ export default function EchoJSONApp() {
 
     recorder.start();
     checkSilence();
-  }, [addMsg, drawViz, transcribeAudio, translateToEnglish]);
+  }, [addMsg, drawViz, transcribeAudio, extractEntity]);
 
   startRecordingRef.current = startRecording;
+
+  // ── Schema Extraction (Playwright reads the live/dummy government form) ─────
+  // Talks to backend/main.py's /api/schema, which navigates to the portal URL
+  // mapped for this service and returns {id, label, type, required, options}
+  // for every field it finds on the page — nothing about the fields is
+  // hardcoded on the frontend.
+  const fetchServiceSchema = useCallback(
+    async (service: ServiceDef): Promise<boolean> => {
+      try {
+        const res = await fetch("/api/schema", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service: service.key }),
+        });
+        if (!res.ok) throw new Error(`Schema request failed: ${res.status}`);
+        const json = await res.json();
+        const fields: Field[] = json.fields ?? [];
+        if (!fields.length) throw new Error("Empty schema returned");
+
+        serviceKeyRef.current = service.key;
+        serviceTitleRef.current = json.title ?? service.label;
+        targetUrlRef.current = json.url;
+        schemaFieldsRef.current = fields;
+        rawDataRef.current = {};
+        dataRef.current = {};
+        fieldIdxRef.current = 0;
+        activeFieldIdRef.current = fields[0].id;
+
+        setServiceTitle(json.title ?? service.label);
+        setSchemaFields(fields);
+        setFormData({});
+        setFieldIdx(0);
+        return true;
+      } catch (err) {
+        console.error("Schema extraction failed", err);
+        return false;
+      }
+    },
+    []
+  );
 
   // ── Dialogue State Machine ───────────────────────────────────────────────────
 
   const processTranscription = useCallback(
     async (rawText: string, englishText: string) => {
       const phase = phaseRef.current;
-      const fId = formIdRef.current;
       const l = langRef.current ?? "en";
 
       // ── Language selection ──
@@ -657,7 +894,7 @@ export default function EchoJSONApp() {
         return;
       }
 
-      // ── Form selection ──
+      // ── Government service selection ──
       if (phase === "await_form") {
         if (isUnclearTranscript(rawText)) {
           const resp = `${PHRASES.didntCatch[l]} ${PHRASES.formChoiceAgain[l]}`;
@@ -665,44 +902,50 @@ export default function EchoJSONApp() {
           speakText(resp, l, () => startRecordingRef.current?.());
           return;
         }
-        const num = parseFormNum(rawText);
-        if (num !== null) {
-          const form = FORMS.find((f) => f.id === num)!;
-          const fields = flatFields(form);
-          formIdRef.current = num;
-          dataRef.current = {};
-          fieldIdxRef.current = 0;
-          activeFieldIdRef.current = fields[0].id;
-          setFormId(num);
-          setFormData({});
-          setFieldIdx(0);
-          const q = fieldQuestion(l, fields[0].id, fields[0].label);
-          const resp = PHRASES.openingForm[l](num, form.title, q);
-          addMsg("agent", resp);
-          syncPhase("collecting");
-          speakText(resp, l, () => startRecordingRef.current?.());
-        } else {
+        const service = parseServiceKey(rawText);
+        if (!service) {
           const resp = PHRASES.formChoiceAgain[l];
           addMsg("agent", resp);
           speakText(resp, l, () => startRecordingRef.current?.());
+          return;
         }
+
+        // Step 3+5 of the architecture: resolve service -> portal URL, then
+        // have Playwright extract that page's live field schema.
+        const loadingMsg = PHRASES.loadingSchema[l](service.label);
+        addMsg("agent", loadingMsg);
+        syncPhase("loading_schema");
+        speakText(loadingMsg, l);
+
+        const ok = await fetchServiceSchema(service);
+        if (!ok) {
+          const resp = PHRASES.schemaLoadFailed[l];
+          addMsg("agent", resp);
+          syncPhase("await_form");
+          speakText(resp, l, () => startRecordingRef.current?.());
+          return;
+        }
+
+        const fields = schemaFieldsRef.current;
+        const q = fieldQuestion(l, fields[0].id, fields[0].label);
+        const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
+        addMsg("agent", resp);
+        syncPhase("collecting");
+        speakText(resp, l, () => startRecordingRef.current?.());
         return;
       }
 
-      // ── Field collection (store English in form) ──
+      // ── Field collection (entity extracted → English stored in form) ──
       if (phase === "collecting") {
-        const form = FORMS.find((f) => f.id === fId)!;
-        const fields = flatFields(form);
+        const fields = schemaFieldsRef.current;
         const idx = fieldIdxRef.current;
         const field = fields[idx];
 
-        if (isUnclearTranscript(englishText)) {
-          activeFieldIdRef.current = field.id;
-          setFormData((prev) => {
-            const next = { ...prev };
-            delete next[field.id];
-            return next;
-          });
+        // No translation/extraction happens here — just a cheap, local
+        // check that something was actually said. The real entity
+        // extraction (and option matching) happens once, for every field
+        // at once, right after the last question is answered.
+        if (isUnclearTranscript(rawText)) {
           const q = fieldQuestion(l, field.id, field.label);
           const resp = `${PHRASES.didntCatch[l]} ${q}`;
           addMsg("agent", resp);
@@ -711,9 +954,8 @@ export default function EchoJSONApp() {
           return;
         }
 
-        const newData = { ...dataRef.current, [field.id]: englishText };
-        dataRef.current = newData;
-        setFormData({ ...newData });
+        const newRaw = { ...rawDataRef.current, [field.id]: rawText };
+        rawDataRef.current = newRaw;
 
         const nextIdx = idx + 1;
         if (nextIdx < fields.length) {
@@ -724,18 +966,32 @@ export default function EchoJSONApp() {
           const resp = PHRASES.gotItNext[l](q);
           addMsg("agent", resp);
           speakText(resp, l, () => startRecordingRef.current?.());
-        } else {
-          fieldIdxRef.current = fields.length;
-          activeFieldIdRef.current = null;
-          setFieldIdx(fields.length);
-          const summary = buildSummary(form, newData, l);
-          addMsg("agent", summary);
-          syncPhase("await_confirm");
-          speakText(summary, l, () => startRecordingRef.current?.());
+          return;
         }
+
+        // Last field answered — this is the ONE point where every collected
+        // answer gets translated/normalized to English, in a single Gemma
+        // call, instead of on every turn.
+        fieldIdxRef.current = fields.length;
+        activeFieldIdRef.current = null;
+        setFieldIdx(fields.length);
+        syncPhase("translating");
+        const loadingMsg = PHRASES.translatingEntities[l];
+        addMsg("agent", loadingMsg);
+        speakText(loadingMsg, l);
+
+        const translated = await translateAndExtractEntities(fields, newRaw);
+        dataRef.current = translated;
+        setFormData(translated);
+
+        const summary = buildSummary(serviceTitleRef.current, fields, translated, l);
+        addMsg("agent", summary);
+        syncPhase("await_confirm");
+        speakText(summary, l, () => startRecordingRef.current?.());
         return;
       }
 
+      // ── Confirmation ──
       // ── Confirmation ──
       if (phase === "await_confirm") {
         if (isUnclearTranscript(rawText)) {
@@ -744,14 +1000,32 @@ export default function EchoJSONApp() {
           speakText(resp, l, () => startRecordingRef.current?.());
           return;
         }
-        if (isYes(rawText, l)) {
+
+        const analysis = await analyzeConfirmation(rawText, schemaFieldsRef.current);
+
+        if (analysis.isConfirm) {
           const resp = PHRASES.submitSuccess[l];
           addMsg("agent", resp);
           syncPhase("done");
           activeFieldIdRef.current = null;
           speakText(resp, l);
           await submitFormRef.current?.();
-        } else {
+        } else if (analysis.fieldId) {
+          const fullField = schemaFieldsRef.current.find((f) => f.id === analysis.fieldId);
+          if (fullField) {
+            corrFieldRef.current = fullField;
+            activeFieldIdRef.current = fullField.id;
+            setCorrFieldId(fullField.id);
+            const resp = PHRASES.correctWhatValue[l](fullField.label);
+            addMsg("agent", resp);
+            syncPhase("correction_value");
+            speakText(resp, l, () => startRecordingRef.current?.());
+            return;
+          }
+        }
+
+        // They said "No" but didn't specify a field, or the field wasn't found
+        if (!analysis.isConfirm) {
           const resp = PHRASES.correctWhichField[l];
           addMsg("agent", resp);
           syncPhase("correction_field");
@@ -762,27 +1036,30 @@ export default function EchoJSONApp() {
 
       // ── Correction: which field ──
       if (phase === "correction_field") {
-        const form = FORMS.find((f) => f.id === fId)!;
-        const fields = flatFields(form);
-        const matched = matchFieldMultilingual(rawText, fields);
-        if (matched) {
-          const fullField = fields.find((f) => f.id === matched.id)!;
-          corrFieldRef.current = fullField;
-          activeFieldIdRef.current = fullField.id;
-          setCorrFieldId(fullField.id);
-          const resp = PHRASES.correctWhatValue[l](fullField.label);
-          addMsg("agent", resp);
-          syncPhase("correction_value");
-          speakText(resp, l, () => startRecordingRef.current?.());
-        } else {
-          const resp = PHRASES.fieldNotMatched[l];
-          addMsg("agent", resp);
-          speakText(resp, l, () => startRecordingRef.current?.());
+        const fields = schemaFieldsRef.current;
+        const analysis = await analyzeConfirmation(rawText, fields);
+
+        if (analysis.fieldId) {
+          const fullField = fields.find((f) => f.id === analysis.fieldId);
+          if (fullField) {
+            corrFieldRef.current = fullField;
+            activeFieldIdRef.current = fullField.id;
+            setCorrFieldId(fullField.id);
+            const resp = PHRASES.correctWhatValue[l](fullField.label);
+            addMsg("agent", resp);
+            syncPhase("correction_value");
+            speakText(resp, l, () => startRecordingRef.current?.());
+            return;
+          }
         }
+
+        const resp = PHRASES.fieldNotMatched[l];
+        addMsg("agent", resp);
+        speakText(resp, l, () => startRecordingRef.current?.());
         return;
       }
 
-      // ── Correction: new value (store English) ──
+      // ── Correction: new value (entity extracted → English) ──
       if (phase === "correction_value") {
         const field = corrFieldRef.current!;
         if (isUnclearTranscript(englishText)) {
@@ -792,22 +1069,40 @@ export default function EchoJSONApp() {
           speakText(resp, l, () => startRecordingRef.current?.());
           return;
         }
-        const form = FORMS.find((f) => f.id === fId)!;
-        const newData = { ...dataRef.current, [field.id]: englishText };
+
+        // Fix 2: same options validation for correction phase
+        let effectiveEnglish = englishText;
+        if (field.options && field.options.length > 0) {
+          const normalized = field.options.find(
+            (o) => o.toLowerCase() === englishText.toLowerCase().trim()
+          );
+          if (!normalized) {
+            const optionsList = field.options.slice(0, 5).join(", ");
+            const resp = PHRASES.invalidOption[l](field.label, optionsList);
+            addMsg("agent", resp);
+            activeFieldIdRef.current = field.id;
+            speakText(resp, l, () => startRecordingRef.current?.());
+            return;
+          }
+          effectiveEnglish = normalized;
+        }
+
+        const fields = schemaFieldsRef.current;
+        const newData = { ...dataRef.current, [field.id]: effectiveEnglish };
         dataRef.current = newData;
         setFormData({ ...newData });
         corrFieldRef.current = null;
         activeFieldIdRef.current = null;
         setCorrFieldId(null);
-        const summary = buildSummary(form, newData, l);
-        const resp = `${PHRASES.updatedField[l](field.label, englishText)} ${summary}`;
+        const summary = buildSummary(serviceTitleRef.current, fields, newData, l);
+        const resp = `${PHRASES.updatedField[l](field.label, effectiveEnglish)} ${summary}`;
         addMsg("agent", resp);
         syncPhase("await_confirm");
         speakText(resp, l, () => startRecordingRef.current?.());
         return;
       }
     },
-    [addMsg, speakSequence, speakText, syncPhase]
+    [addMsg, speakSequence, speakText, syncPhase, fetchServiceSchema, translateAndExtractEntities, analyzeConfirmation]
   );
 
   useEffect(() => {
@@ -817,16 +1112,16 @@ export default function EchoJSONApp() {
   // ── Backend Submission ───────────────────────────────────────────────────────
 
   const submitForm = useCallback(async () => {
-    const fId = formIdRef.current;
-    const form = FORMS.find((f) => f.id === fId);
-    if (!form) return;
+    const url = targetUrlRef.current;
+    if (!url) return;
     try {
+      // Step 9+10 of the architecture: send the confirmed JSON to Playwright,
+      // which maps it onto the field IDs it extracted from this same URL.
       await fetch("/api/fill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          form_id: fId,
-          form_title: form.title,
+          url,
           data: dataRef.current,
         }),
       });
@@ -921,11 +1216,12 @@ export default function EchoJSONApp() {
   }, [addMsg, speakSequence, syncPhase]);
 
   const handleFormCardClick = useCallback(
-    (id: number) => {
+    async (key: string) => {
       const p = phaseRef.current;
       if (
         !modelLoadedRef.current ||
         p === "collecting" ||
+        p === "loading_schema" ||
         p === "await_confirm" ||
         p === "correction_field" ||
         p === "correction_value" ||
@@ -934,6 +1230,9 @@ export default function EchoJSONApp() {
       )
         return;
 
+      const service = SERVICES.find((s) => s.key === key);
+      if (!service) return;
+
       // If language not chosen yet, pick English by default then open form
       const l = langRef.current ?? "en";
       if (!langRef.current) {
@@ -941,29 +1240,37 @@ export default function EchoJSONApp() {
         setLang("en");
       }
 
-      const form = FORMS.find((f) => f.id === id)!;
-      const fields = flatFields(form);
-      formIdRef.current = id;
-      dataRef.current = {};
-      fieldIdxRef.current = 0;
-      activeFieldIdRef.current = fields[0].id;
       corrFieldRef.current = null;
-      setFormId(id);
-      setFormData({});
-      setFieldIdx(0);
       setCorrFieldId(null);
 
+      const loadingMsg = PHRASES.loadingSchema[l](service.label);
+      addMsg("agent", loadingMsg);
+      syncPhase("loading_schema");
+      speakText(loadingMsg, l);
+
+      const ok = await fetchServiceSchema(service);
+      if (!ok) {
+        const resp = PHRASES.schemaLoadFailed[l];
+        addMsg("agent", resp);
+        syncPhase("ready");
+        speakText(resp, l);
+        return;
+      }
+
+      const fields = schemaFieldsRef.current;
       const q = fieldQuestion(l, fields[0].id, fields[0].label);
-      const resp = PHRASES.openingForm[l](id, form.title, q);
+      const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
       addMsg("agent", resp);
       syncPhase("collecting");
       speakText(resp, l, () => startRecordingRef.current?.());
     },
-    [addMsg, speakText, syncPhase]
+    [addMsg, speakText, syncPhase, fetchServiceSchema]
   );
 
   const handleReset = useCallback(() => {
+    sessionIdRef.current += 1;
     window.speechSynthesis?.cancel();
+    stopCloudTts(cloudAudioRef);
     cancelAnimationFrame(rafRef.current);
     try {
       if (mediaRecorderRef.current?.state !== "inactive") {
@@ -972,13 +1279,18 @@ export default function EchoJSONApp() {
     } catch {
       // ignore
     }
-    formIdRef.current = null;
+    serviceKeyRef.current = null;
+    serviceTitleRef.current = "";
+    targetUrlRef.current = "";
+    schemaFieldsRef.current = [];
     langRef.current = null;
+    rawDataRef.current = {};
     dataRef.current = {};
     fieldIdxRef.current = 0;
     corrFieldRef.current = null;
     activeFieldIdRef.current = null;
-    setFormId(null);
+    setServiceTitle("");
+    setSchemaFields([]);
     setLang(null);
     setFormData({});
     setFieldIdx(0);
@@ -992,8 +1304,8 @@ export default function EchoJSONApp() {
 
   // ── Derived state for render ──────────────────────────────────────────────────
 
-  const activeForm = FORMS.find((f) => f.id === formId) ?? null;
-  const allFields = activeForm ? flatFields(activeForm) : [];
+  const allFields = schemaFields;
+  const hasActiveForm = allFields.length > 0;
   const currField = phase === "collecting" ? (allFields[fieldIdx] ?? null) : null;
 
   const statusLabel = (() => {
@@ -1004,6 +1316,8 @@ export default function EchoJSONApp() {
     if (phase === "done") return "Session Complete";
     if (phase === "await_confirm") return "Awaiting Confirmation";
     if (phase === "await_language") return "Choose Language";
+    if (phase === "loading_schema") return "Reading Form Fields";
+    if (phase === "translating") return "Translating Answers";
     if (phase === "ready") return "Ready";
     return "Standby";
   })();
@@ -1018,7 +1332,8 @@ export default function EchoJSONApp() {
   })();
 
   const micIcon = (() => {
-    if (phase === "init" || isTranscribing) return "fa-spinner animate-spin";
+    if (phase === "init" || isTranscribing || phase === "translating")
+      return "fa-spinner animate-spin";
     if (isRecording) return "fa-microphone-lines animate-pulse";
     if (agentSpeaking) return "fa-volume-high animate-pulse";
     if (phase === "done") return "fa-check";
@@ -1029,6 +1344,7 @@ export default function EchoJSONApp() {
     if (phase === "init") return "Loading";
     if (isRecording) return "Listening";
     if (isTranscribing) return "Thinking";
+    if (phase === "translating") return "Translating";
     if (agentSpeaking) return "Speaking";
     if (phase === "done") return "Done";
     if (phase === "ready") return "Start";
@@ -1036,7 +1352,11 @@ export default function EchoJSONApp() {
   })();
 
   const micDisabled =
-    phase === "init" || isTranscribing || agentSpeaking || isRecording;
+    phase === "init" ||
+    phase === "translating" ||
+    isTranscribing ||
+    agentSpeaking ||
+    isRecording;
   const micClickable = phase === "ready";
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1072,12 +1392,17 @@ export default function EchoJSONApp() {
                 {LANG_LABELS[lang]}
               </span>
             )}
+            {/* Fix #1: Stop Session button — visible during any active phase */}
             {phase !== "init" && phase !== "ready" && (
               <button
                 onClick={handleReset}
-                className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-slate-300 hover:text-white transition flex items-center gap-1.5"
+                className={`text-xs px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${phase === "done"
+                  ? "bg-slate-800 hover:bg-slate-700 border-slate-700/80 text-slate-300 hover:text-white"
+                  : "bg-red-950/60 hover:bg-red-900/60 border-red-800/60 text-red-300 hover:text-red-200"
+                  }`}
               >
-                <i className="fa-solid fa-rotate-left" /> New Session
+                <i className={`fa-solid ${phase === "done" ? "fa-rotate-left" : "fa-stop"}`} />
+                {phase === "done" ? "New Session" : "Stop Session"}
               </button>
             )}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700/80">
@@ -1141,16 +1466,17 @@ export default function EchoJSONApp() {
                   How it works
                 </h2>
                 <ol className="text-xs text-slate-400 space-y-1.5 list-decimal list-inside leading-relaxed">
-                  <li>Click <strong className="text-slate-300">Start</strong> — agent asks in English, Hindi &amp; Bengali which language you prefer</li>
-                  <li>Say <strong className="text-slate-300">Hindi</strong>, <strong className="text-slate-300">English</strong>, or <strong className="text-slate-300">Bengali</strong> — entire conversation continues in that language</li>
-                  <li>Pick a form and answer each field by voice — your speech is translated to <strong className="text-slate-300">English</strong> in the form</li>
-                  <li>Agent reads back a summary; say <strong className="text-slate-300">&quot;Yes&quot;</strong> / <strong className="text-slate-300">हाँ</strong> / <strong className="text-slate-300">হ্যাঁ</strong> to submit</li>
-                  <li>Name any field to correct it — session data clears on reset</li>
+                  <li>Click <strong className="text-slate-300">Start</strong> — choose English, Hindi, or Bengali</li>
+                  <li>Say the service name — e.g. <strong className="text-slate-300">Ration Card</strong></li>
+                  <li>Answer each field by voice — your answers stay hidden as simple voice notes</li>
+                  <li>Once every field is answered, Gemma translates everything to English in one go</li>
+                  <li>Confirm summary; say <strong className="text-slate-300">&quot;Yes&quot;</strong> / <strong className="text-slate-300">हाँ</strong> / <strong className="text-slate-300">হ্যাঁ</strong> to submit</li>
+                  <li>Name any field to correct it; click <strong className="text-red-400">Stop Session</strong> anytime</li>
                 </ol>
               </div>
             )}
 
-            {/* Chat transcript */}
+            {/* Chat transcript — WhatsApp-style voice notes, no text shown */}
             <div
               className="glass-panel rounded-3xl flex flex-col overflow-hidden flex-1"
               style={{ minHeight: "240px" }}
@@ -1168,24 +1494,46 @@ export default function EchoJSONApp() {
                       : "Click Start or select a form to begin"}
                   </p>
                 )}
-                {chat.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={
-                      msg.role === "user" ? "flex justify-end" : "flex justify-start"
-                    }
-                  >
+                {chat.map((msg) => {
+                  const isUser = msg.role === "user";
+                  const bars = pseudoWaveform(msg.id);
+                  const durationSec = Math.max(
+                    1,
+                    Math.min(28, Math.round(msg.text.length / 13))
+                  );
+                  return (
                     <div
-                      className={`max-w-[88%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                        msg.role === "user"
+                      key={msg.id}
+                      className={isUser ? "flex justify-end" : "flex justify-start"}
+                    >
+                      <div
+                        className={`flex items-center gap-2 px-3 py-2 rounded-full max-w-[80%] ${isUser
                           ? "bg-gradient-to-tr from-brand-600 to-purple-600 text-white rounded-br-sm"
                           : "bg-slate-800/80 border border-slate-700/40 text-slate-200 rounded-bl-sm"
-                      }`}
-                    >
-                      {msg.text}
+                          }`}
+                      >
+                        <i className="fa-solid fa-circle-play text-sm opacity-90 flex-shrink-0" />
+                        <div className="flex items-end gap-[2.5px] h-4 flex-shrink-0">
+                          {bars.map((h, i) => (
+                            <span
+                              key={i}
+                              className={`w-[2.5px] rounded-full ${isUser ? "bg-white/70" : "bg-slate-400/70"
+                                }`}
+                              style={{ height: `${h}%` }}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-[10px] font-mono opacity-70 flex-shrink-0">
+                          {durationSec}s
+                        </span>
+                        <i
+                          className={`fa-solid ${isUser ? "fa-microphone" : "fa-robot"
+                            } text-[10px] opacity-60 flex-shrink-0`}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div ref={chatEndRef} />
               </div>
             </div>
@@ -1193,7 +1541,7 @@ export default function EchoJSONApp() {
             {/* Mic button + visualiser */}
             <div
               className="glass-panel rounded-3xl p-5 flex flex-col items-center gap-3 relative overflow-hidden"
-              style={{ minHeight: "150px" }}
+              style={{ minHeight: "160px" }}
             >
               <canvas
                 ref={canvasRef}
@@ -1207,34 +1555,36 @@ export default function EchoJSONApp() {
                     (isRecording
                       ? "Listening — say English, Hindi, or Bengali"
                       : agentSpeaking
-                      ? "Agent speaking in 3 languages…"
-                      : "Preparing…")}
+                        ? "Agent speaking in 3 languages…"
+                        : "Preparing…")}
                   {phase === "await_form" &&
                     (isRecording
-                      ? "Listening — say Form 1, 2, 3, or 4"
+                      ? "Listening — say Ration Card or Voter ID"
                       : agentSpeaking
-                      ? "Agent speaking…"
-                      : "Preparing…")}
+                        ? "Agent speaking…"
+                        : "Preparing…")}
                   {phase === "collecting" &&
                     currField &&
                     (isRecording
                       ? `Listening — ${currField.label}`
                       : agentSpeaking
-                      ? "Agent speaking…"
-                      : `Next field: ${currField.label}`)}
+                        ? "Agent speaking…"
+                        : `Next: ${currField.label}`)}
+                  {phase === "translating" &&
+                    "Translating your answers to English…"}
                   {phase === "await_confirm" &&
                     (isRecording
                       ? "Listening — say Yes to submit or name a field to correct"
                       : agentSpeaking
-                      ? "Agent speaking…"
-                      : "Say yes to submit, or name a field to correct")}
+                        ? "Agent speaking…"
+                        : "Say yes to submit, or name a field to correct")}
                   {(phase === "correction_field" ||
                     phase === "correction_value") &&
                     (isRecording
                       ? "Listening…"
                       : agentSpeaking
-                      ? "Agent speaking…"
-                      : "Ready")}
+                        ? "Agent speaking…"
+                        : "Ready")}
                   {phase === "done" &&
                     "Session complete — click New Session to start over"}
                 </p>
@@ -1243,19 +1593,18 @@ export default function EchoJSONApp() {
                   type="button"
                   disabled={micDisabled && !isRecording && !agentSpeaking}
                   onClick={micClickable ? handleStartSession : undefined}
-                  className={`relative w-20 h-20 rounded-full flex flex-col items-center justify-center gap-1 shadow-2xl transition duration-150 select-none ${
-                    isRecording
-                      ? "bg-gradient-to-tr from-red-600 to-red-700 text-white shadow-red-600/30 cursor-default"
-                      : isTranscribing
+                  className={`relative w-20 h-20 rounded-full flex flex-col items-center justify-center gap-1 shadow-2xl transition duration-150 select-none ${isRecording
+                    ? "bg-gradient-to-tr from-red-600 to-red-700 text-white shadow-red-600/30 cursor-default"
+                    : isTranscribing
                       ? "bg-slate-700 text-slate-400 cursor-wait"
                       : agentSpeaking
-                      ? "bg-gradient-to-tr from-blue-600 to-indigo-700 text-white cursor-default"
-                      : phase === "done"
-                      ? "bg-emerald-700 text-white cursor-default"
-                      : phase === "init"
-                      ? "bg-slate-800 text-slate-500 cursor-not-allowed opacity-60"
-                      : "bg-gradient-to-tr from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white cursor-pointer active:scale-95"
-                  }`}
+                        ? "bg-gradient-to-tr from-blue-600 to-indigo-700 text-white cursor-default"
+                        : phase === "done"
+                          ? "bg-emerald-700 text-white cursor-default"
+                          : phase === "init"
+                            ? "bg-slate-800 text-slate-500 cursor-not-allowed opacity-60"
+                            : "bg-gradient-to-tr from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white cursor-pointer active:scale-95"
+                    }`}
                 >
                   <i className={`fa-solid ${micIcon} text-xl`} />
                   <span className="text-[9px] font-bold uppercase tracking-wider">
@@ -1265,50 +1614,66 @@ export default function EchoJSONApp() {
                     <div className="absolute inset-0 rounded-full bg-red-500/20 animate-ripple" />
                   )}
                 </button>
+
+                {/* Fix #1: Prominent Stop Session button in voice panel */}
+                {phase !== "init" && phase !== "ready" && phase !== "done" && (
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="flex items-center gap-1.5 text-[11px] font-semibold text-red-400 hover:text-red-300 transition-colors duration-150"
+                  >
+                    <i className="fa-solid fa-circle-stop text-xs" />
+                    Stop Session
+                  </button>
+                )}
               </div>
             </div>
           </aside>
 
           {/* ── Right: Form panel ── */}
           <section className="lg:col-span-3 flex flex-col gap-4">
-            {!activeForm ? (
-              /* 2×2 form card grid */
+            {phase === "loading_schema" ? (
+              /* Playwright is extracting the live form schema */
+              <div className="glass-panel rounded-3xl flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
+                <i className="fa-solid fa-spinner fa-spin text-3xl text-brand-400" />
+                <p className="text-sm text-slate-300">
+                  Reading {serviceTitle || "form"} fields from the portal…
+                </p>
+                <p className="text-xs text-slate-500">
+                  Playwright is extracting labels, IDs, and field types live.
+                </p>
+              </div>
+            ) : !hasActiveForm ? (
+              /* Government service picker — the URL and schema for each are
+                 resolved by the backend, not hardcoded here. */
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
-                {FORMS.map((f) => (
+                {SERVICES.map((s, i) => (
                   <button
-                    key={f.id}
+                    key={s.key}
                     type="button"
-                    onClick={() => handleFormCardClick(f.id)}
+                    onClick={() => handleFormCardClick(s.key)}
                     disabled={phase === "init"}
-                    className={`glass-panel rounded-3xl p-5 text-left flex flex-col gap-3 border border-slate-800/80 transition-all duration-200 ${
-                      phase === "init"
-                        ? "opacity-50 cursor-not-allowed"
-                        : "hover:border-slate-600/60 hover:scale-[1.015] active:scale-[0.985] cursor-pointer"
-                    }`}
+                    className={`glass-panel rounded-3xl p-5 text-left flex flex-col gap-3 border border-slate-800/80 transition-all duration-200 ${phase === "init"
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:border-slate-600/60 hover:scale-[1.015] active:scale-[0.985] cursor-pointer"
+                      }`}
                   >
                     <div
-                      className={`w-12 h-12 rounded-2xl bg-gradient-to-tr ${f.gradient} flex items-center justify-center shadow-lg`}
+                      className={`w-12 h-12 rounded-2xl bg-gradient-to-tr ${i % 2 === 0
+                        ? "from-blue-600 to-indigo-600"
+                        : "from-purple-600 to-pink-600"
+                        } flex items-center justify-center shadow-lg`}
                     >
-                      <i className={`fa-solid ${f.icon} text-white text-xl`} />
+                      <i className="fa-solid fa-file-lines text-white text-xl" />
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">
-                        Form {f.id}
+                        Government Service
                       </p>
-                      <h3 className="text-sm font-bold text-white">{f.title}</h3>
+                      <h3 className="text-sm font-bold text-white">{s.label}</h3>
                       <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                        {f.desc}
+                        Fields are read live from the portal via Playwright.
                       </p>
-                    </div>
-                    <div className="mt-auto pt-2.5 border-t border-slate-800/40 flex items-center justify-between text-[10px] text-slate-500">
-                      <span>
-                        <i className="fa-solid fa-layer-group mr-1.5" />
-                        {f.sections.length} sections
-                      </span>
-                      <span>
-                        <i className="fa-solid fa-bars mr-1.5" />
-                        {flatFields(f).length} fields
-                      </span>
                     </div>
                   </button>
                 ))}
@@ -1316,19 +1681,17 @@ export default function EchoJSONApp() {
             ) : (
               /* Active form being filled */
               <div className="glass-panel rounded-3xl overflow-hidden flex flex-col flex-1">
-                {/* Form header with gradient */}
-                <div
-                  className={`bg-gradient-to-r ${activeForm.gradient} px-5 py-4 flex items-center gap-3`}
-                >
+                {/* Form header */}
+                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
-                    <i className={`fa-solid ${activeForm.icon} text-white`} />
+                    <i className="fa-solid fa-file-lines text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">
-                      Form {activeForm.id}
+                      Live Portal Schema
                     </p>
                     <h2 className="text-sm font-bold text-white">
-                      {activeForm.title}
+                      {serviceTitle}
                     </h2>
                     {lang && lang !== "en" && (
                       <p className="text-[9px] text-white/50 mt-0.5">
@@ -1347,7 +1710,7 @@ export default function EchoJSONApp() {
                           width: `${Math.round(
                             (Math.min(fieldIdx, allFields.length) /
                               allFields.length) *
-                              100
+                            100
                           )}%`,
                         }}
                       />
@@ -1355,68 +1718,55 @@ export default function EchoJSONApp() {
                   </div>
                 </div>
 
-                {/* Sections + fields */}
+                {/* Extracted fields */}
                 <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
-                  {activeForm.sections.map((section) => (
-                    <div key={section.title}>
-                      <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
-                        <span className="h-px flex-1 bg-slate-800/60" />
-                        {section.title}
-                        <span className="h-px flex-1 bg-slate-800/60" />
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {section.fields.map((field) => {
-                          const value = formData[field.id];
-                          const isActive =
-                            currField?.id === field.id &&
-                            phase === "collecting";
-                          const isBeingCorrected =
-                            corrFieldId === field.id &&
-                            phase === "correction_value";
-                          const isFilled = !!value;
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {allFields.map((field) => {
+                      const value = formData[field.id];
+                      const isActive =
+                        currField?.id === field.id && phase === "collecting";
+                      const isBeingCorrected =
+                        corrFieldId === field.id &&
+                        phase === "correction_value";
+                      const isFilled = !!value;
 
-                          return (
-                            <div
-                              key={field.id}
-                              className={`rounded-xl border p-3 transition-all duration-300 ${
-                                isActive || isBeingCorrected
-                                  ? "border-brand-500/60 bg-brand-500/10 shadow-sm shadow-brand-500/10"
-                                  : isFilled
-                                  ? "border-emerald-500/25 bg-emerald-500/5"
-                                  : "border-slate-800/50 bg-slate-900/30"
+                      return (
+                        <div
+                          key={field.id}
+                          className={`rounded-xl border p-3 transition-all duration-300 ${isActive || isBeingCorrected
+                            ? "border-brand-500/60 bg-brand-500/10 shadow-sm shadow-brand-500/10"
+                            : isFilled
+                              ? "border-emerald-500/25 bg-emerald-500/5"
+                              : "border-slate-800/50 bg-slate-900/30"
+                            }`}
+                        >
+                          <label
+                            className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isActive || isBeingCorrected
+                              ? "text-brand-400"
+                              : isFilled
+                                ? "text-emerald-400"
+                                : "text-slate-600"
                               }`}
-                            >
-                              <label
-                                className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${
-                                  isActive || isBeingCorrected
-                                    ? "text-brand-400"
-                                    : isFilled
-                                    ? "text-emerald-400"
-                                    : "text-slate-600"
-                                }`}
-                              >
-                                {field.label}
-                                {(isActive || isBeingCorrected) && (
-                                  <span className="ml-1.5 animate-pulse">
-                                    ●
-                                  </span>
-                                )}
-                              </label>
-                              <div
-                                className={`text-xs font-mono leading-snug min-h-[18px] ${
-                                  isFilled
-                                    ? "text-slate-100"
-                                    : "text-slate-600 italic"
-                                }`}
-                              >
-                                {isFilled ? value : field.placeholder}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                          >
+                            {field.label}
+                            {(isActive || isBeingCorrected) && (
+                              <span className="ml-1.5 animate-pulse">●</span>
+                            )}
+                          </label>
+                          <div
+                            className={`text-xs font-mono leading-snug min-h-[18px] ${isFilled
+                              ? "text-slate-100"
+                              : "text-slate-600 italic"
+                              }`}
+                          >
+                            {isFilled
+                              ? value
+                              : field.placeholder || `#${field.id}`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
 
                   {/* Done state */}
                   {phase === "done" && (
@@ -1448,3 +1798,4 @@ export default function EchoJSONApp() {
     </>
   );
 }
+

@@ -16,29 +16,29 @@ export const LANG_BCP47: Record<Lang, string> = {
 export const LANG_PICK_GREETING: { text: string; lang: Lang }[] = [
   {
     lang: "en",
-    text: "Good morning! Which language would you prefer? English, Hindi, or Bengali?",
+    text: "Hello! Which language? English, Hindi, or Bengali?",
   },
   {
     lang: "hi",
-    text: "सुप्रभात! आप कौन सी भाषा चुनना चाहेंगे? अंग्रेज़ी, हिंदी, या बंगाली?",
+    text: "नमस्ते! कौन सी भाषा? अंग्रेज़ी, हिंदी, या बंगाली?",
   },
   {
     lang: "bn",
-    text: "সুপ্রভাত! আপনি কোন ভাষা বেছে নেবেন? ইংরেজি, হিন্দি, নাকি বাংলা?",
+    text: "হ্যালো! কোন ভাষা? ইংরেজি, হিন্দি, নাকি বাংলা?",
   },
 ];
 
 export function parseLanguage(text: string): Lang | null {
   const t = text.toLowerCase();
   if (
-    /\b(english|angrezi|angreji|inglish|ইংরেজি|ইংরেজী|अंग्रेज़ी|अंग्रेजी|angrez)\b/i.test(
+    /\b(english|angrezi|angreji|inglish|angrez)\b|ইংরেজি|ইংরেজী|अंग्रेज़ी|अंग्रेजी/i.test(
       t
     )
   )
     return "en";
-  if (/\b(hindi|hindustani|hind|हिंदी|हिन्दी|हिन्दि|হিন্দি|হিন্দী)\b/i.test(t)) return "hi";
+  if (/\b(hindi|hindustani|hind)\b|हिंदी|हिन्दी|हिन्दि|হিন্দি|হিন্দী/i.test(t)) return "hi";
   if (
-    /\b(bengali|bangla|bangali|beng|বাংলা|বাঙালি|বেঙ্গালি)\b/i.test(t)
+    /\b(bengali|bangla|bangali|beng)\b|বাংলা|বাঙালি|বেঙ্গালি/i.test(t)
   )
     return "bn";
   return null;
@@ -47,206 +47,230 @@ export function parseLanguage(text: string): Lang | null {
 export function isYes(text: string, lang: Lang): boolean {
   const t = text.toLowerCase();
   if (lang === "hi") {
-    return /\b(haan|ha|han|ji|sahi|theek|thik|ठीक|हाँ|हां|जी|सही|सब\s+ठीक|submit|yes)\b/i.test(
+    return /\b(haan|ha|han|ji|sahi|theek|thik|submit|yes)\b|ठीक|हाँ|हां|जी|सही|सब\s+ठीक/i.test(
       t
     );
   }
   if (lang === "bn") {
-    return /\b(haan|ha|hyan|hyn|thik|ঠিক|হ্যাঁ|হা|জি|সঠিক|submit|yes)\b/i.test(
+    return /\b(haan|ha|hyan|hyn|thik|submit|yes)\b|ঠিক|হ্যাঁ|হা|জি|সঠিক/i.test(
       t
     );
   }
-  return /\b(yes|yeah|yep|yup|correct|right|submit|confirm|go\s+ahead|looks\s+good|all\s+correct|perfect|sure|ok|okay|fine|that.?s\s+(right|correct))\b/i.test(
+  return /\b(yes|yeah|yep|yup|correct|right|submit|confirm|go\s+ahead|looks\s+good|all\s+correct|perfect|sure|ok|okay|fine)\b|that.?s\s+(right|correct)/i.test(
     t
   );
 }
 
-/** Localised agent phrases */
+/** Localised agent phrases — kept short to reduce TTS time */
 export const PHRASES = {
   langChoiceAgain: {
-    en: "I didn't catch that. Please say English, Hindi, or Bengali.",
-    hi: "मुझे समझ नहीं आया। कृपया अंग्रेज़ी, हिंदी, या बंगाली कहें।",
-    bn: "আমি বুঝতে পারিনি। দয়া করে ইংরেজি, হিন্দি, বা বাংলা বলুন।",
+    en: "Say English, Hindi, or Bengali.",
+    hi: "अंग्रेज़ी, हिंदी, या बंगाली कहें।",
+    bn: "ইংরেজি, হিন্দি, বা বাংলা বলুন।",
   },
   langSelected: {
-    en: (l: string) => `Great! I will speak in ${l}.`,
-    hi: (l: string) => `बहुत अच्छा! मैं ${l} में बात करूँगा।`,
-    bn: (l: string) => `দারুণ! আমি ${l}-তে কথা বলব।`,
+    en: (l: string) => `${l} selected.`,
+    hi: (l: string) => `${l} चुना गया।`,
+    bn: (l: string) => `${l} বেছে নেওয়া হয়েছে।`,
   },
   formGreeting: {
-    en: "Which form would you like to open? Form 1: Personal Registration, Form 2: Medical Appointment, Form 3: Job Application, or Form 4: Travel and Visa.",
-    hi: "आप कौन सा फॉर्म खोलना चाहेंगे? फॉर्म 1: व्यक्तिगत पंजीकरण, फॉर्म 2: चिकित्सा अपॉइंटमेंट, फॉर्म 3: नौकरी आवेदन, या फॉर्म 4: यात्रा और वीज़ा।",
-    bn: "আপনি কোন ফর্ম খুলতে চান? ফর্ম 1: ব্যক্তিগত নিবন্ধন, ফর্ম 2: চিকিৎসা অ্যাপয়েন্টমেন্ট, ফর্ম 3: চাকরির আবেদন, বা ফর্ম 4: ভ্রমণ ও ভিসা।",
+    en: "Which service? Say Ration Card or Voter ID.",
+    hi: "कौन सी सेवा? राशन कार्ड या वोटर आईडी कहें।",
+    bn: "কোন পরিষেবা? রেশন কার্ড বা ভোটার আইডি বলুন।",
   },
   formChoiceAgain: {
-    en: "I didn't catch which form. Please say Form 1, 2, 3, or 4.",
-    hi: "मुझे फॉर्म समझ नहीं आया। कृपया फॉर्म 1, 2, 3, या 4 कहें।",
-    bn: "আমি ফর্মটি বুঝতে পারিনি। দয়া করে ফর্ম 1, 2, 3, বা 4 বলুন।",
+    en: "Say Ration Card or Voter ID.",
+    hi: "राशन कार्ड या वोटर आईडी कहें।",
+    bn: "রেশন কার্ড বা ভোটার আইডি বলুন।",
+  },
+  loadingSchema: {
+    en: (title: string) => `Opening ${title} form…`,
+    hi: (title: string) => `${title} फॉर्म खुल रहा है…`,
+    bn: (title: string) => `${title} ফর্ম খোলা হচ্ছে…`,
+  },
+  schemaLoadFailed: {
+    en: "Couldn't open that form. Please try again.",
+    hi: "फॉर्म नहीं खुला। दोबारा कोशिश करें।",
+    bn: "ফর্ম খুলতে পারিনি। আবার চেষ্টা করুন।",
+  },
+  translatingEntities: {
+    en: "Thanks! One moment while I convert your answers to English.",
+    hi: "धन्यवाद! एक क्षण रुकें, आपके उत्तर अंग्रेज़ी में बदले जा रहे हैं।",
+    bn: "ধন্যবাদ! একটু অপেক্ষা করুন, আপনার উত্তরগুলো ইংরেজিতে রূপান্তর করা হচ্ছে।",
   },
   openingForm: {
-    en: (num: number, title: string, field: string) =>
-      `Opening Form ${num}, ${title}. Let's get started. ${field}`,
-    hi: (num: number, title: string, field: string) =>
-      `फॉर्म ${num}, ${title} खोला जा रहा है। चलिए शुरू करते हैं। ${field}`,
-    bn: (num: number, title: string, field: string) =>
-      `ফর্ম ${num}, ${title} খোলা হচ্ছে। চলুন শুরু করি। ${field}`,
+    en: (_num: number, title: string, field: string) =>
+      `${title}. ${field}`,
+    hi: (_num: number, title: string, field: string) =>
+      `${title}। ${field}`,
+    bn: (_num: number, title: string, field: string) =>
+      `${title}। ${field}`,
   },
   gotItNext: {
-    en: (field: string) => `Got it. ${field}`,
+    en: (field: string) => `OK. ${field}`,
     hi: (field: string) => `ठीक है। ${field}`,
     bn: (field: string) => `ঠিক আছে। ${field}`,
   },
   didntCatch: {
-    en: "Sorry, I didn't catch that. Please try again.",
-    hi: "माफ़ कीजिए, मुझे समझ नहीं आया। कृपया फिर से बोलें।",
-    bn: "দুঃখিত, আমি বুঝতে পারিনি। দয়া করে আবার বলুন।",
+    en: "Please repeat.",
+    hi: "दोबारा बोलें।",
+    bn: "আবার বলুন।",
   },
   summaryIntro: {
     en: (title: string, lines: string) =>
-      `Here is a summary of your ${title}. ${lines}. Does everything look correct? Say yes to submit, or tell me which field to change.`,
+      `${title}: ${lines}. Correct? Say yes to submit, or name a field to change.`,
     hi: (title: string, lines: string) =>
-      `यहाँ आपके ${title} का सारांश है। ${lines}। क्या सब कुछ सही है? जमा करने के लिए हाँ कहें, या बताएँ कौन सा फ़ील्ड बदलना है।`,
+      `${title}: ${lines}। सही है? हाँ कहें या कोई फ़ील्ड बदलें।`,
     bn: (title: string, lines: string) =>
-      `এখানে আপনার ${title}-এর সারাংশ। ${lines}। সব কিছু ঠিক আছে? জমা দিতে হ্যাঁ বলুন, অথবা কোন ক্ষেত্র পরিবর্তন করতে চান বলুন।`,
+      `${title}: ${lines}। ঠিক আছে? হ্যাঁ বলুন বা কোনো ক্ষেত্র পরিবর্তন করুন।`,
   },
   submitSuccess: {
-    en: "Form submitted successfully! Thank you. Your session is now complete.",
-    hi: "फॉर्म सफलतापूर्वक जमा हो गया! धन्यवाद। आपका सत्र समाप्त हो गया है।",
-    bn: "ফর্ম সফলভাবে জমা হয়েছে! ধন্যবাদ। আপনার সেশন শেষ হয়েছে।",
+    en: "Submitted! Session complete.",
+    hi: "जमा हो गया! सत्र समाप्त।",
+    bn: "জমা হয়েছে! সেশন শেষ।",
   },
   correctWhichField: {
-    en: "Which field would you like to correct? Please say the field name clearly.",
-    hi: "आप कौन सा फ़ील्ड सुधारना चाहेंगे? कृपया फ़ील्ड का नाम स्पष्ट रूप से बताएँ।",
-    bn: "আপনি কোন ক্ষেত্র সংশোধন করতে চান? দয়া করে ক্ষেত্রের নাম স্পষ্টভাবে বলুন।",
+    en: "Which field to correct?",
+    hi: "कौन सा फ़ील्ड सुधारें?",
+    bn: "কোন ক্ষেত্র সংশোধন করবেন?",
   },
   correctWhatValue: {
-    en: (label: string) => `What should ${label} be?`,
-    hi: (label: string) => `${label} क्या होना चाहिए?`,
-    bn: (label: string) => `${label} কী হওয়া উচিত?`,
+    en: (label: string) => `New ${label}?`,
+    hi: (label: string) => `नया ${label}?`,
+    bn: (label: string) => `নতুন ${label}?`,
   },
   fieldNotMatched: {
-    en: "I couldn't match that to a field. Please say a field name like Full Name, City, or Email.",
-    hi: "मुझे वह फ़ील्ड नहीं मिला। कृपया पूरा नाम, शहर, या ईमेल जैसा कोई नाम बताएँ।",
-    bn: "আমি সেই ক্ষেত্রটি খুঁজে পাইনি। দয়া করে পুরো নাম, শহর, বা ইমেইলের মতো কোনো নাম বলুন।",
+    en: "Field not found. Say a field name.",
+    hi: "फ़ील्ड नहीं मिला। फ़ील्ड का नाम बताएँ।",
+    bn: "ক্ষেত্র পাওয়া যায়নি। ক্ষেত্রের নাম বলুন।",
   },
   updatedField: {
-    en: (label: string, value: string) => `Updated ${label} to "${value}".`,
-    hi: (label: string, value: string) => `${label} को "${value}" में अपडेट किया।`,
-    bn: (label: string, value: string) => `${label} "${value}"-তে আপডেট করা হয়েছে।`,
+    en: (label: string, value: string) => `${label}: "${value}".`,
+    hi: (label: string, value: string) => `${label}: "${value}"।`,
+    bn: (label: string, value: string) => `${label}: "${value}"।`,
   },
   notProvided: {
     en: "not provided",
-    hi: "दिया नहीं गया",
-    bn: "প্রদান করা হয়নি",
+    hi: "नहीं दिया",
+    bn: "দেওয়া হয়নি",
+  },
+  /** Fix 2: spoken when user's answer doesn't match a field's fixed option list */
+  invalidOption: {
+    en: (label: string, opts: string) =>
+      `That's not a valid choice for ${label}. Please say one of: ${opts}.`,
+    hi: (label: string, opts: string) =>
+      `${label} के लिए यह विकल्प सही नहीं है। कृपया इनमें से एक कहें: ${opts}।`,
+    bn: (label: string, opts: string) =>
+      `${label}-এর জন্য এটি সঠিক বিকল্প নয়। দয়া করে বলুন: ${opts}।`,
   },
 };
 
-/** Per-field question prompts in each language */
+/** Per-field question prompts in each language — short form */
 export const FIELD_QUESTIONS: Record<Lang, Record<string, string>> = {
   en: {
-    full_name: "What is your Full Name?",
-    dob: "What is your Date of Birth?",
-    gender: "What is your Gender?",
-    email: "What is your Email Address?",
-    phone: "What is your Phone Number?",
-    street: "What is your Street or Area?",
-    city: "What is your City?",
-    pincode: "What is your PIN Code?",
-    patient_name: "What is the Patient Name?",
-    age: "What is the Patient's Age?",
-    blood_group: "What is the Blood Group?",
-    condition: "What is the Condition or Symptoms?",
-    doctor: "Who is the Preferred Doctor?",
-    appt_date: "What is the Preferred Appointment Date?",
-    insurance_id: "What is the Insurance ID?",
-    insurer: "What is the Insurance Provider?",
-    app_name: "What is your Full Name?",
-    app_email: "What is your Email?",
-    app_phone: "What is your Phone Number?",
-    position: "What Position are you applying for?",
-    experience: "How many Years of Experience do you have?",
-    company: "What is your Current Company?",
-    education: "What is your Highest Education?",
-    skills: "What are your Key Skills?",
-    trav_name: "What is your Full Name as on passport?",
-    passport_no: "What is your Passport Number?",
-    nationality: "What is your Nationality?",
-    destination: "What is your Destination country?",
-    depart_date: "What is your Departure Date?",
-    return_date: "What is your Return Date?",
-    duration: "What is the Duration of Stay?",
-    purpose: "What is the Purpose of Visit?",
-    accommodation: "What is your Accommodation?",
+    full_name: "Full name?",
+    dob: "Date of birth? (DD/MM/YYYY)",
+    gender: "Gender?",
+    email: "Email?",
+    phone: "Phone number?",
+    street: "Street or area?",
+    city: "City?",
+    pincode: "PIN code?",
+    patient_name: "Patient name?",
+    age: "Age?",
+    blood_group: "Blood group?",
+    condition: "Condition or symptoms?",
+    doctor: "Preferred doctor?",
+    appt_date: "Appointment date?",
+    insurance_id: "Insurance ID?",
+    insurer: "Insurance provider?",
+    app_name: "Full name?",
+    app_email: "Email?",
+    app_phone: "Phone?",
+    position: "Position applied for?",
+    experience: "Years of experience?",
+    company: "Current company?",
+    education: "Highest education?",
+    skills: "Key skills?",
+    trav_name: "Name as on passport?",
+    passport_no: "Passport number?",
+    nationality: "Nationality?",
+    destination: "Destination country?",
+    depart_date: "Departure date?",
+    return_date: "Return date?",
+    duration: "Duration of stay?",
+    purpose: "Purpose of visit?",
+    accommodation: "Accommodation?",
   },
   hi: {
-    full_name: "आपका पूरा नाम क्या है?",
-    dob: "आपकी जन्म तिथि क्या है?",
-    gender: "आपका लिंग क्या है?",
-    email: "आपका ईमेल पता क्या है?",
-    phone: "आपका फ़ोन नंबर क्या है?",
-    street: "आपकी गली या इलाका क्या है?",
-    city: "आपका शहर कौन सा है?",
-    pincode: "आपका पिन कोड क्या है?",
-    patient_name: "मरीज़ का नाम क्या है?",
-    age: "मरीज़ की उम्र क्या है?",
-    blood_group: "रक्त समूह क्या है?",
-    condition: "बीमारी या लक्षण क्या हैं?",
-    doctor: "पसंदीदा डॉक्टर कौन हैं?",
-    appt_date: "पसंदीदा अपॉइंटमेंट की तारीख क्या है?",
-    insurance_id: "बीमा आईडी क्या है?",
-    insurer: "बीमा प्रदाता कौन है?",
-    app_name: "आपका पूरा नाम क्या है?",
-    app_email: "आपका ईमेल क्या है?",
-    app_phone: "आपका फ़ोन नंबर क्या है?",
-    position: "आप किस पद के लिए आवेदन कर रहे हैं?",
-    experience: "आपके कितने वर्षों का अनुभव है?",
-    company: "आपकी वर्तमान कंपनी क्या है?",
-    education: "आपकी उच्चतम शिक्षा क्या है?",
-    skills: "आपके मुख्य कौशल क्या हैं?",
-    trav_name: "पासपोर्ट पर आपका पूरा नाम क्या है?",
-    passport_no: "आपका पासपोर्ट नंबर क्या है?",
-    nationality: "आपकी राष्ट्रीयता क्या है?",
-    destination: "आप किस देश जा रहे हैं?",
-    depart_date: "प्रस्थान की तारीख क्या है?",
-    return_date: "वापसी की तारीख क्या है?",
-    duration: "ठहरने की अवधि कितनी है?",
-    purpose: "यात्रा का उद्देश्य क्या है?",
-    accommodation: "आपका आवास क्या है?",
+    full_name: "पूरा नाम?",
+    dob: "जन्म तिथि? (DD/MM/YYYY)",
+    gender: "लिंग?",
+    email: "ईमेल?",
+    phone: "फ़ोन नंबर?",
+    street: "गली या इलाका?",
+    city: "शहर?",
+    pincode: "पिन कोड?",
+    patient_name: "मरीज़ का नाम?",
+    age: "उम्र?",
+    blood_group: "रक्त समूह?",
+    condition: "बीमारी या लक्षण?",
+    doctor: "पसंदीदा डॉक्टर?",
+    appt_date: "अपॉइंटमेंट की तारीख?",
+    insurance_id: "बीमा आईडी?",
+    insurer: "बीमा प्रदाता?",
+    app_name: "पूरा नाम?",
+    app_email: "ईमेल?",
+    app_phone: "फ़ोन?",
+    position: "किस पद के लिए?",
+    experience: "कितने साल का अनुभव?",
+    company: "वर्तमान कंपनी?",
+    education: "सर्वोच्च शिक्षा?",
+    skills: "मुख्य कौशल?",
+    trav_name: "पासपोर्ट पर नाम?",
+    passport_no: "पासपोर्ट नंबर?",
+    nationality: "राष्ट्रीयता?",
+    destination: "गंतव्य देश?",
+    depart_date: "प्रस्थान तिथि?",
+    return_date: "वापसी तिथि?",
+    duration: "रहने की अवधि?",
+    purpose: "यात्रा का उद्देश्य?",
+    accommodation: "आवास?",
   },
   bn: {
-    full_name: "আপনার পুরো নাম কী?",
-    dob: "আপনার জন্ম তারিখ কী?",
-    gender: "আপনার লিঙ্গ কী?",
-    email: "আপনার ইমেইল ঠিকানা কী?",
-    phone: "আপনার ফোন নম্বর কী?",
-    street: "আপনার রাস্তা বা এলাকা কী?",
-    city: "আপনার শহর কোনটি?",
-    pincode: "আপনার পিন কোড কী?",
-    patient_name: "রোগীর নাম কী?",
-    age: "রোগীর বয়স কত?",
-    blood_group: "রক্তের গ্রুপ কী?",
-    condition: "রোগ বা লক্ষণ কী?",
-    doctor: "পছন্দের ডাক্তার কে?",
-    appt_date: "পছন্দের অ্যাপয়েন্টমেন্টের তারিখ কী?",
-    insurance_id: "বীমা আইডি কী?",
-    insurer: "বীমা প্রদানকারী কে?",
-    app_name: "আপনার পুরো নাম কী?",
-    app_email: "আপনার ইমেইল কী?",
-    app_phone: "আপনার ফোন নম্বর কী?",
-    position: "আপনি কোন পদের জন্য আবেদন করছেন?",
-    experience: "আপনার কত বছরের অভিজ্ঞতা?",
-    company: "আপনার বর্তমান কোম্পানি কী?",
-    education: "আপনার সর্বোচ্চ শিক্ষা কী?",
-    skills: "আপনার মূল দক্ষতা কী?",
-    trav_name: "পাসপোর্টে আপনার পুরো নাম কী?",
-    passport_no: "আপনার পাসপোর্ট নম্বর কী?",
-    nationality: "আপনার জাতীয়তা কী?",
-    destination: "আপনি কোন দেশে যাচ্ছেন?",
-    depart_date: "প্রস্থানের তারিখ কী?",
-    return_date: "ফেরার তারিখ কী?",
-    duration: "থাকার সময়কাল কত?",
-    purpose: "ভ্রমণের উদ্দেশ্য কী?",
-    accommodation: "আপনার থাকার ব্যবস্থা কী?",
+    full_name: "পুরো নাম?",
+    dob: "জন্ম তারিখ? (DD/MM/YYYY)",
+    gender: "লিঙ্গ?",
+    email: "ইমেইল?",
+    phone: "ফোন নম্বর?",
+    street: "রাস্তা বা এলাকা?",
+    city: "শহর?",
+    pincode: "পিন কোড?",
+    patient_name: "রোগীর নাম?",
+    age: "বয়স?",
+    blood_group: "রক্তের গ্রুপ?",
+    condition: "রোগ বা লক্ষণ?",
+    doctor: "পছন্দের ডাক্তার?",
+    appt_date: "অ্যাপয়েন্টমেন্টের তারিখ?",
+    insurance_id: "বীমা আইডি?",
+    insurer: "বীমা প্রদানকারী?",
+    app_name: "পুরো নাম?",
+    app_email: "ইমেইল?",
+    app_phone: "ফোন?",
+    position: "কোন পদের জন্য?",
+    experience: "কত বছরের অভিজ্ঞতা?",
+    company: "বর্তমান কোম্পানি?",
+    education: "সর্বোচ্চ শিক্ষা?",
+    skills: "মূল দক্ষতা?",
+    trav_name: "পাসপোর্টে নাম?",
+    passport_no: "পাসপোর্ট নম্বর?",
+    nationality: "জাতীয়তা?",
+    destination: "গন্তব্য দেশ?",
+    depart_date: "প্রস্থানের তারিখ?",
+    return_date: "ফেরার তারিখ?",
+    duration: "থাকার সময়কাল?",
+    purpose: "ভ্রমণের উদ্দেশ্য?",
+    accommodation: "থাকার ব্যবস্থা?",
   },
 };
 
@@ -283,8 +307,20 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   accommodation: ["accommodation", "hotel", "আবাস", "आवास"],
 };
 
+const GENERIC_FIELD_QUESTION: Record<Lang, (label: string) => string> = {
+  en: (label) => `${label}?`,
+  hi: (label) => `${label}?`,
+  bn: (label) => `${label}?`,
+};
+
+/**
+ * Question for a form field. Fields extracted at runtime from a government
+ * portal's schema won't have a pre-written entry in FIELD_QUESTIONS, so this
+ * always falls back to a generic templated question built from the label
+ * the schema itself gave us (e.g. "aadhaar_number" -> "Aadhaar Number").
+ */
 export function fieldQuestion(lang: Lang, fieldId: string, fallbackLabel: string): string {
-  return FIELD_QUESTIONS[lang][fieldId] ?? `What is your ${fallbackLabel}?`;
+  return FIELD_QUESTIONS[lang][fieldId] ?? GENERIC_FIELD_QUESTION[lang](fallbackLabel);
 }
 
 export function matchFieldMultilingual(
@@ -307,6 +343,36 @@ export function matchFieldMultilingual(
 export function pickVoice(lang: Lang, voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined {
   if (!voices.length) return undefined;
 
+  // Fix 3: Bengali voice clarity — prefer Microsoft Kalpana/Nabanita/Hemant/Pradeep Online (Natural)
+  // or Google বাংলা (Bangla/Bengali) voices over robotic offline desktop system voices.
+  if (lang === "bn") {
+    const bnPriority = [
+      /kalpana.*online/i,              // Microsoft Kalpana Online (Natural) bn-IN (Excellent Female)
+      /nabanita.*online/i,             // Microsoft Nabanita Online (Natural) bn-BD (Excellent Female)
+      /google.*bangla/i,               // Google বাংলা
+      /google.*bengali/i,
+      /google.*বাংলা/i,
+      /hemant.*online/i,               // Microsoft Hemant Online (Natural) bn-IN (Male)
+      /pradeep.*online/i,              // Microsoft Pradeep Online (Natural) bn-BD (Male)
+      /microsoft.*bengali.*online/i,
+      /online.*natural/i,              // any other online natural Bengali voice
+      /kalpana/i,                      // offline Kalpana
+      /nabanita/i,
+      /anindya/i,
+      /hemant/i,
+    ];
+    for (const pattern of bnPriority) {
+      const v = voices.find((v) => pattern.test(v.name) || pattern.test(v.lang));
+      if (v) return v;
+    }
+    // Generic fallback to any bn-IN, then bn-BD
+    const byExact = voices.find((v) => v.lang === "bn-IN");
+    if (byExact) return byExact;
+    const byBD = voices.find((v) => v.lang === "bn-BD");
+    if (byBD) return byBD;
+    return voices.find((v) => v.lang.toLowerCase().startsWith("bn"));
+  }
+
   const langPrefixes: Record<Lang, string[]> = {
     en: ["en-IN", "en-GB", "en-US", "en-AU", "en"],
     hi: ["hi-IN", "hi"],
@@ -316,7 +382,7 @@ export function pickVoice(lang: Lang, voices: SpeechSynthesisVoice[]): SpeechSyn
   const namePatterns: Record<Lang, RegExp | null> = {
     en: null,
     hi: /hindi|swara|heera|neerja/i,
-    bn: /bengali|bangla|bashkar|bani|madhur.*bn|bn-/i,
+    bn: null, // handled above
   };
 
   for (const prefix of langPrefixes[lang]) {
@@ -334,8 +400,8 @@ export function pickVoice(lang: Lang, voices: SpeechSynthesisVoice[]): SpeechSyn
     if (byName) return byName;
   }
 
-  // Google online voices often work when OS lacks Bengali/Hindi packs
-  if (lang === "bn" || lang === "hi") {
+  // Google online voices often work when OS lacks Hindi packs
+  if (lang === "hi") {
     const google = voices.find(
       (v) => /google/i.test(v.name) && v.lang.toLowerCase().startsWith(lang)
     );
@@ -353,3 +419,4 @@ export function isUnclearTranscript(text: string): boolean {
   if (t.length < 2) return true;
   return false;
 }
+
