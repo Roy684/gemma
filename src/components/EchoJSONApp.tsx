@@ -44,19 +44,6 @@ type ChatMsg = { id: string; role: "agent" | "user"; text: string };
 let _mid = 0;
 const uid = () => `m${++_mid}`;
 
-// Deterministic fake waveform bar heights (%) derived from a message id, so
-// each voice-note bubble looks distinct but never needs real audio data.
-function pseudoWaveform(seed: string, bars = 18): number[] {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const out: number[] = [];
-  for (let i = 0; i < bars; i++) {
-    h = (h * 1103515245 + 12345) >>> 0;
-    out.push(25 + (h % 75)); // 25%–100% height
-  }
-  return out;
-}
-
 // ─── Government Service Directory ──────────────────────────────────────────────
 // This is voice-matching metadata only. The backend owns the service -> URL
 // mapping (SERVICE_PORTAL_MAP in backend/main.py) and Playwright extracts the
@@ -124,6 +111,9 @@ export default function EchoJSONApp() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
+  // Background waveform canvas (shown on the ready-state landing page)
+  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
+  const bgRafRef = useRef<number>(0);
   // Session ID — incremented on every reset to invalidate stale recorder callbacks
   const sessionIdRef = useRef(0);
   const cloudAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -321,6 +311,58 @@ export default function EchoJSONApp() {
       }
     };
     frame();
+  }, []);
+
+  // ── Background Waveform (ready-state landing) ────────────────────────────────
+
+  const drawWaveformBackground = useCallback(() => {
+    // Re-read bgCanvasRef on every frame so the animation seamlessly continues
+    // when the canvas element is replaced during a phase transition.
+    let t = 0;
+    const render = () => {
+      bgRafRef.current = requestAnimationFrame(render);
+      const canvas = bgCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      // Light gray base
+      ctx.fillStyle = "#dde4ec";
+      ctx.fillRect(0, 0, w, h);
+      // Subtle grid
+      ctx.strokeStyle = "rgba(160,175,190,0.35)";
+      ctx.lineWidth = 0.5;
+      const g = 35;
+      for (let x = 0; x < w; x += g) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+      for (let y = 0; y < h; y += g) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+      t += 0.008;
+      // Animated sine-wave layers
+      const waves: { yFrac: number; amp: number; freq: number; speed: number; color: string; lw: number }[] = [
+        { yFrac: 0.18, amp: 50, freq: 0.007, speed: 0.9,  color: "rgba(34,197,94,0.22)",   lw: 2.5 },
+        { yFrac: 0.38, amp: 32, freq: 0.011, speed: 0.5,  color: "rgba(34,197,94,0.15)",   lw: 2   },
+        { yFrac: 0.55, amp: 60, freq: 0.006, speed: 0.7,  color: "rgba(34,197,94,0.18)",   lw: 2.5 },
+        { yFrac: 0.75, amp: 28, freq: 0.013, speed: 1.1,  color: "rgba(34,197,94,0.10)",   lw: 1.5 },
+        { yFrac: 0.30, amp: 22, freq: 0.009, speed: 0.4,  color: "rgba(100,149,237,0.08)", lw: 1.5 },
+        { yFrac: 0.68, amp: 38, freq: 0.008, speed: 0.6,  color: "rgba(100,149,237,0.07)", lw: 1   },
+      ];
+      waves.forEach(({ yFrac, amp, freq, speed, color, lw }) => {
+        const cy = h * yFrac;
+        ctx.beginPath();
+        for (let x = 0; x <= w; x += 2) {
+          const y = cy + Math.sin(x * freq + t * speed) * amp;
+          x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        ctx.stroke();
+      });
+    };
+    render();
   }, []);
 
   // ── Transcription ────────────────────────────────────────────────────────────
@@ -1210,6 +1252,18 @@ JSON:`;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
 
+  // Waveform background: starts once on mount and runs for the entire session.
+  // Because drawWaveformBackground reads bgCanvasRef.current every frame, it
+  // automatically picks up the new canvas element when a phase transition swaps
+  // the rendered canvas (ready-state early-return ↔ main render).
+  useEffect(() => {
+    const id = window.setTimeout(drawWaveformBackground, 60);
+    return () => {
+      window.clearTimeout(id);
+      cancelAnimationFrame(bgRafRef.current);
+    };
+  }, [drawWaveformBackground]);
+
   // ── Session Controls ─────────────────────────────────────────────────────────
 
   const handleStartSession = useCallback(() => {
@@ -1336,89 +1390,129 @@ JSON:`;
     return "bg-emerald-500";
   })();
 
-  const micIcon = (() => {
-    if (phase === "init" || isTranscribing || phase === "translating")
-      return "fa-spinner animate-spin";
-    if (isRecording) return "fa-microphone-lines animate-pulse";
-    if (agentSpeaking) return "fa-volume-high animate-pulse";
-    if (phase === "done") return "fa-check";
-    return "fa-microphone";
-  })();
-
-  const micLabel = (() => {
+  const centerButtonLabel = (() => {
     if (phase === "init") return "Loading";
+    if (phase === "ready") return "Start";
+    if (phase === "done") return "New Session";
     if (isRecording) return "Listening";
     if (isTranscribing) return "Thinking";
     if (phase === "translating") return "Translating";
     if (agentSpeaking) return "Speaking";
-    if (phase === "done") return "Done";
-    if (phase === "ready") return "Start";
-    return "Auto";
+    return "Active";
   })();
 
-  const micDisabled =
-    phase === "init" ||
-    phase === "translating" ||
-    isTranscribing ||
-    agentSpeaking ||
-    isRecording;
-  const micClickable = phase === "ready";
+  const centerButtonDisabled =
+    phase === "init" || phase === "translating" || isTranscribing;
+
+  const handleCenterButton = useCallback(() => {
+    if (phaseRef.current === "ready") handleStartSession();
+    else if (phaseRef.current === "done") handleReset();
+    else if (
+      !isRecording &&
+      !agentSpeaking &&
+      !isTranscribing &&
+      phaseRef.current !== "init" &&
+      phaseRef.current !== "translating"
+    ) {
+      startRecordingRef.current?.();
+    }
+  }, [handleStartSession, handleReset, isRecording, agentSpeaking, isTranscribing]);
+
+  const glassCard =
+    "rounded-2xl shadow-lg backdrop-blur-[14px] border border-white/65";
+  const glassStyle = {
+    background: "rgba(255,255,255,0.72)",
+    backdropFilter: "blur(14px)",
+    border: "1px solid rgba(255,255,255,0.65)",
+  } as const;
+
+  const sessionHint = (() => {
+    if (phase === "init") return "Loading model, please wait…";
+    if (phase === "ready") return "Click Start or select a service to begin voice automation.";
+    if (phase === "await_language")
+      return isRecording
+        ? "Listening — say English, Hindi, or Bengali"
+        : agentSpeaking
+          ? "Agent speaking…"
+          : "Preparing language selection…";
+    if (phase === "await_form")
+      return isRecording
+        ? "Listening — say Ration Card or Voter ID"
+        : agentSpeaking
+          ? "Agent speaking…"
+          : "Preparing…";
+    if (phase === "collecting" && currField)
+      return isRecording
+        ? `Listening — ${currField.label}`
+        : agentSpeaking
+          ? "Agent speaking…"
+          : `Next: ${currField.label}`;
+    if (phase === "translating") return "Translating your answers to English…";
+    if (phase === "await_confirm")
+      return isRecording
+        ? "Listening — say Yes to submit or name a field to correct"
+        : agentSpeaking
+          ? "Agent speaking…"
+          : "Say yes to submit, or name a field to correct";
+    if (phase === "correction_field" || phase === "correction_value")
+      return isRecording ? "Listening…" : agentSpeaking ? "Agent speaking…" : "Ready";
+    if (phase === "done") return "Session complete — click New Session to start over";
+    return "";
+  })();
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
-  return (
-    <>
-      {/* Background glow */}
-      <div className="glow-sphere w-96 h-96 bg-brand-500 -top-24 -left-24 animate-pulse-slow" />
-      <div
-        className="glow-sphere w-[500px] h-[500px] bg-purple-500 -bottom-32 -right-32 animate-pulse-slow"
-        style={{ animationDelay: "1.5s" }}
-      />
+  const showLargeMic = phase === "ready" || (chat.length === 0 && phase !== "init");
 
-      <div className="flex-1 flex flex-col max-w-7xl w-full mx-auto px-4 py-6 gap-5">
+  return (
+    <div className="fixed inset-0 overflow-hidden" style={{ background: "#dde4ec" }}>
+      {/* Waveform canvas – shared with the ready-state early return via bgCanvasRef */}
+      <canvas ref={bgCanvasRef} className="absolute inset-0 w-full h-full" />
+
+      <div className="relative z-10 flex flex-col h-full">
         {/* ── Header ── */}
-        <header className="flex justify-between items-center border-b border-slate-800/60 pb-4">
+        <header className="flex justify-between items-center px-6 py-3 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-purple-600 flex items-center justify-center shadow-lg shadow-brand-500/20">
-              <i className="fa-solid fa-microphone-lines text-white" />
+            <div className="flex items-end gap-[3px] h-7">
+              {[4, 7, 5, 9, 6, 8, 5, 7].map((h, i) => (
+                <div key={i} className="w-[3px] rounded-full bg-slate-700" style={{ height: `${h * 3}px` }} />
+              ))}
             </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
-                EchoJSON
-              </h1>
-              <p className="text-[11px] text-slate-400">
-                Voice-Driven Form Automation · On-Device WebGPU
-              </p>
-            </div>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight">EchoJSON</h1>
           </div>
           <div className="flex items-center gap-2">
             {lang && (
-              <span className="text-[10px] uppercase font-semibold px-2 py-1 rounded bg-brand-500/10 text-brand-300 border border-brand-500/20">
+              <span className="text-[10px] uppercase font-semibold px-2.5 py-1 rounded-full bg-green-100 text-green-700 border border-green-300">
                 {LANG_LABELS[lang]}
               </span>
             )}
-            {/* Fix #1: Stop Session button — visible during any active phase */}
-            {phase !== "init" && phase !== "ready" && (
+            {phase !== "init" && (
               <button
                 onClick={handleReset}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${phase === "done"
-                  ? "bg-slate-800 hover:bg-slate-700 border-slate-700/80 text-slate-300 hover:text-white"
-                  : "bg-red-950/60 hover:bg-red-900/60 border-red-800/60 text-red-300 hover:text-red-200"
-                  }`}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                  phase === "done"
+                    ? "bg-white/70 hover:bg-white border-slate-300 text-slate-600 hover:text-slate-800"
+                    : "bg-red-50 hover:bg-red-100 border-red-200 text-red-600 hover:text-red-700"
+                }`}
               >
                 <i className={`fa-solid ${phase === "done" ? "fa-rotate-left" : "fa-stop"}`} />
                 {phase === "done" ? "New Session" : "Stop Session"}
               </button>
             )}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700/80">
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full border shadow-sm"
+              style={
+                phase === "ready"
+                  ? { background: "rgba(220,252,231,0.8)", borderColor: "rgba(134,239,172,0.7)" }
+                  : { background: "rgba(255,255,255,0.80)", borderColor: "rgba(203,213,225,0.8)" }
+              }
+            >
               <span className="relative flex h-2.5 w-2.5">
-                <span
-                  className={`animate-ping absolute inset-0 rounded-full opacity-75 ${dotColor}`}
-                />
+                <span className={`animate-ping absolute inset-0 rounded-full opacity-75 ${dotColor}`} />
                 <span className={`relative rounded-full h-2.5 w-2.5 ${dotColor}`} />
               </span>
-              <span className="text-xs font-medium text-slate-300">
-                {statusLabel}
+              <span className={`text-xs font-medium ${phase === "ready" ? "text-green-700 font-semibold" : "text-slate-600"}`}>
+                {phase === "ready" ? "System Ready" : statusLabel}
               </span>
             </div>
           </div>
@@ -1426,282 +1520,196 @@ JSON:`;
 
         {/* ── Error ── */}
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-4 py-3 rounded-2xl flex items-start gap-3">
+          <div className="mx-6 mb-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl flex items-start gap-3">
             <i className="fa-solid fa-circle-exclamation text-red-400 mt-0.5 flex-shrink-0" />
             <p className="text-xs flex-1">{error}</p>
             <button type="button" onClick={() => setError(null)}>
-              <i className="fa-solid fa-xmark text-red-400 hover:text-red-300" />
+              <i className="fa-solid fa-xmark text-red-400 hover:text-red-500" />
             </button>
           </div>
         )}
 
-        {/* ── Main ── */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-5">
-          {/* ── Left: Voice panel ── */}
-          <aside className="lg:col-span-2 flex flex-col gap-4">
-            {/* Download progress */}
-            {phase === "init" && (
-              <div className="glass-panel rounded-3xl p-5">
-                <div className="flex justify-between mb-2">
-                  <span className="text-xs font-semibold text-white">
-                    Downloading Gemma 4 E2B
-                  </span>
-                  <span className="text-xs text-brand-400 font-mono">
-                    {dlPct}%
-                  </span>
+        {/* ── Main: unified 3-column layout ── */}
+        <main className="flex-1 flex items-stretch gap-4 px-8 pb-8 min-h-0 overflow-hidden">
+
+          {/* Left — Getting Started */}
+          <div className={`${glassCard} p-6 flex flex-col gap-4 w-[270px] shrink-0`} style={glassStyle}>
+            <h2 className="text-lg font-bold text-slate-800">Getting Started</h2>
+            {phase === "init" ? (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="font-semibold text-slate-700">Downloading Gemma 4 E2B</span>
+                  <span className="font-mono text-green-600">{dlPct}%</span>
                 </div>
-                <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
+                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                   <div
-                    className="bg-gradient-to-r from-brand-600 to-purple-600 h-full rounded-full transition-all duration-300"
+                    className="bg-gradient-to-r from-green-500 to-emerald-500 h-full rounded-full transition-all duration-300"
                     style={{ width: `${dlPct}%` }}
                   />
                 </div>
-                <p className="text-xs text-slate-500 mt-2.5 leading-relaxed">
-                  Downloading ~1.5 GB model. It will be cached in your browser
-                  for future sessions.
+                <p className="text-xs text-slate-400">
+                  Downloading ~1.5 GB model. It will be cached in your browser for future sessions.
                 </p>
-              </div>
-            )}
-
-            {/* How it works card */}
-            {(phase === "ready" || phase === "await_language" || phase === "await_form") && (
-              <div className="glass-panel rounded-3xl p-5">
-                <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-2">
-                  <i className="fa-solid fa-wand-magic-sparkles text-brand-500" />
-                  How it works
-                </h2>
-                <ol className="text-xs text-slate-400 space-y-1.5 list-decimal list-inside leading-relaxed">
-                  <li>Click <strong className="text-slate-300">Start</strong> — choose English, Hindi, or Bengali</li>
-                  <li>Say the service name — e.g. <strong className="text-slate-300">Ration Card</strong></li>
-                  <li>Answer each field by voice — your answers stay hidden as simple voice notes</li>
-                  <li>Once every field is answered, Gemma translates everything to English in one go</li>
-                  <li>Confirm summary; say <strong className="text-slate-300">&quot;Yes&quot;</strong> / <strong className="text-slate-300">हाँ</strong> / <strong className="text-slate-300">হ্যাঁ</strong> to submit</li>
-                  <li>Name any field to correct it; click <strong className="text-red-400">Stop Session</strong> anytime</li>
+              </>
+            ) : (
+              <>
+                <ol className="space-y-3 text-sm text-slate-600 flex-1">
+                  {[
+                    "Choose Language: English, Hindi, Bengali",
+                    "Say Service Name (e.g., Ration Card)",
+                    "Answer Voice Prompts",
+                    'Confirm Summary with \u201cYes\u201d',
+                    "Correct Errors anytime",
+                  ].map((step, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="text-[11px] text-slate-400 font-mono mt-0.5 shrink-0">{i + 1}.</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
                 </ol>
-              </div>
-            )}
-
-            {/* Chat transcript — WhatsApp-style voice notes, no text shown */}
-            <div
-              className="glass-panel rounded-3xl flex flex-col overflow-hidden flex-1"
-              style={{ minHeight: "240px" }}
-            >
-              <div className="px-4 py-3 border-b border-slate-800/60">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Voice Conversation
-                </p>
-              </div>
-              <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-2.5">
-                {chat.length === 0 && (
-                  <p className="text-xs text-slate-500 italic text-center py-6">
-                    {phase === "init"
-                      ? "Loading model…"
-                      : "Click Start or select a form to begin"}
-                  </p>
-                )}
-                {chat.map((msg) => {
-                  const isUser = msg.role === "user";
-                  const bars = pseudoWaveform(msg.id);
-                  const durationSec = Math.max(
-                    1,
-                    Math.min(28, Math.round(msg.text.length / 13))
-                  );
-                  return (
-                    <div
-                      key={msg.id}
-                      className={isUser ? "flex justify-end" : "flex justify-start"}
-                    >
-                      <div
-                        className={`flex items-center gap-2 px-3 py-2 rounded-full max-w-[80%] ${isUser
-                          ? "bg-gradient-to-tr from-brand-600 to-purple-600 text-white rounded-br-sm"
-                          : "bg-slate-800/80 border border-slate-700/40 text-slate-200 rounded-bl-sm"
-                          }`}
-                      >
-                        <i className="fa-solid fa-circle-play text-sm opacity-90 flex-shrink-0" />
-                        <div className="flex items-end gap-[2.5px] h-4 flex-shrink-0">
-                          {bars.map((h, i) => (
-                            <span
-                              key={i}
-                              className={`w-[2.5px] rounded-full ${isUser ? "bg-white/70" : "bg-slate-400/70"
-                                }`}
-                              style={{ height: `${h}%` }}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-[10px] font-mono opacity-70 flex-shrink-0">
-                          {durationSec}s
-                        </span>
-                        <i
-                          className={`fa-solid ${isUser ? "fa-microphone" : "fa-robot"
-                            } text-[10px] opacity-60 flex-shrink-0`}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-                <div ref={chatEndRef} />
-              </div>
-            </div>
-
-            {/* Mic button + visualiser */}
-            <div
-              className="glass-panel rounded-3xl p-5 flex flex-col items-center gap-3 relative overflow-hidden"
-              style={{ minHeight: "160px" }}
-            >
-              <canvas
-                ref={canvasRef}
-                className="absolute inset-0 w-full h-full opacity-[0.12] pointer-events-none rounded-3xl"
-              />
-              <div className="z-10 flex flex-col items-center gap-3 w-full">
-                <p className="text-[11px] text-slate-400 text-center font-medium min-h-[14px]">
-                  {phase === "init" && "Loading model, please wait…"}
-                  {phase === "ready" && "Press Start — choose English, Hindi, or Bengali"}
-                  {phase === "await_language" &&
-                    (isRecording
-                      ? "Listening — say English, Hindi, or Bengali"
-                      : agentSpeaking
-                        ? "Agent speaking in 3 languages…"
-                        : "Preparing…")}
-                  {phase === "await_form" &&
-                    (isRecording
-                      ? "Listening — say Ration Card or Voter ID"
-                      : agentSpeaking
-                        ? "Agent speaking…"
-                        : "Preparing…")}
-                  {phase === "collecting" &&
-                    currField &&
-                    (isRecording
-                      ? `Listening — ${currField.label}`
-                      : agentSpeaking
-                        ? "Agent speaking…"
-                        : `Next: ${currField.label}`)}
-                  {phase === "translating" &&
-                    "Translating your answers to English…"}
-                  {phase === "await_confirm" &&
-                    (isRecording
-                      ? "Listening — say Yes to submit or name a field to correct"
-                      : agentSpeaking
-                        ? "Agent speaking…"
-                        : "Say yes to submit, or name a field to correct")}
-                  {(phase === "correction_field" ||
-                    phase === "correction_value") &&
-                    (isRecording
-                      ? "Listening…"
-                      : agentSpeaking
-                        ? "Agent speaking…"
-                        : "Ready")}
-                  {phase === "done" &&
-                    "Session complete — click New Session to start over"}
-                </p>
-
-                <button
-                  type="button"
-                  disabled={micDisabled && !isRecording && !agentSpeaking}
-                  onClick={micClickable ? handleStartSession : undefined}
-                  className={`relative w-20 h-20 rounded-full flex flex-col items-center justify-center gap-1 shadow-2xl transition duration-150 select-none ${isRecording
-                    ? "bg-gradient-to-tr from-red-600 to-red-700 text-white shadow-red-600/30 cursor-default"
-                    : isTranscribing
-                      ? "bg-slate-700 text-slate-400 cursor-wait"
-                      : agentSpeaking
-                        ? "bg-gradient-to-tr from-blue-600 to-indigo-700 text-white cursor-default"
-                        : phase === "done"
-                          ? "bg-emerald-700 text-white cursor-default"
-                          : phase === "init"
-                            ? "bg-slate-800 text-slate-500 cursor-not-allowed opacity-60"
-                            : "bg-gradient-to-tr from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white cursor-pointer active:scale-95"
-                    }`}
+                <div
+                  className="flex items-center justify-between rounded-xl px-3 py-2.5"
+                  style={{ border: "1px solid rgba(203,213,225,0.8)", background: "rgba(255,255,255,0.55)" }}
                 >
-                  <i className={`fa-solid ${micIcon} text-xl`} />
-                  <span className="text-[9px] font-bold uppercase tracking-wider">
-                    {micLabel}
+                  <span className="text-sm text-slate-600">
+                    {lang ? `Language: ${LANG_LABELS[lang]}` : "Language: English, Hindi, Bengali"}
                   </span>
-                  {isRecording && (
-                    <div className="absolute inset-0 rounded-full bg-red-500/20 animate-ripple" />
-                  )}
-                </button>
-
-                {/* Fix #1: Prominent Stop Session button in voice panel */}
-                {phase !== "init" && phase !== "ready" && phase !== "done" && (
+                  <i className="fa-solid fa-chevron-down text-slate-400 text-xs" />
+                </div>
+                {phase === "ready" && (
                   <button
                     type="button"
-                    onClick={handleReset}
-                    className="flex items-center gap-1.5 text-[11px] font-semibold text-red-400 hover:text-red-300 transition-colors duration-150"
+                    onClick={handleStartSession}
+                    className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold rounded-xl py-3 transition-all duration-150 shadow-md"
+                    style={{ boxShadow: "0 4px 14px rgba(34,197,94,0.35)" }}
                   >
-                    <i className="fa-solid fa-circle-stop text-xs" />
-                    Stop Session
+                    Start Session
                   </button>
                 )}
-              </div>
-            </div>
-          </aside>
+              </>
+            )}
+          </div>
 
-          {/* ── Right: Form panel ── */}
-          <section className="lg:col-span-3 flex flex-col gap-4">
+          {/* Center — Live Session (transcriptions + Start) */}
+          <div className={`${glassCard} p-6 flex flex-col gap-3 flex-1 min-w-0 relative overflow-hidden`} style={glassStyle}>
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full opacity-[0.06] pointer-events-none rounded-2xl"
+            />
+            <h2 className="text-lg font-bold text-slate-800 shrink-0">Live Session</h2>
+
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 relative z-10">
+              {showLargeMic && (
+                <div className="flex items-center justify-center py-4 shrink-0">
+                  <div className="relative flex flex-col items-center scale-90">
+                    {(isRecording || agentSpeaking) && (
+                      <div
+                        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[55%] w-40 h-40 rounded-full border border-green-400/30 animate-ping"
+                        style={{ animationDuration: "2.8s" }}
+                      />
+                    )}
+                    <div
+                      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[55%] w-32 h-32 rounded-full"
+                      style={{ background: "radial-gradient(circle, rgba(34,197,94,0.18) 0%, transparent 70%)" }}
+                    />
+                    <div className="relative z-10 flex flex-col items-center">
+                      <div
+                        className="w-[64px] h-[78px] rounded-t-[36px] rounded-b-[6px] relative shadow-2xl overflow-hidden"
+                        style={{ background: "linear-gradient(145deg, #cdd5dc 0%, #9aaab5 40%, #78909c 70%, #8fa0aa 100%)" }}
+                      >
+                        <div
+                          className="absolute inset-[6px] rounded-t-[30px]"
+                          style={{
+                            backgroundImage:
+                              "repeating-linear-gradient(0deg,rgba(0,0,0,0.07) 0,rgba(0,0,0,0.07) 1px,transparent 1px,transparent 7px)," +
+                              "repeating-linear-gradient(90deg,rgba(0,0,0,0.07) 0,rgba(0,0,0,0.07) 1px,transparent 1px,transparent 7px)",
+                          }}
+                        />
+                        <div className="absolute top-3 left-3 w-3 h-8 rounded-full blur-[4px]" style={{ background: "rgba(255,255,255,0.32)" }} />
+                      </div>
+                      <div className="w-[9px] h-5 rounded-sm" style={{ background: "linear-gradient(to bottom, #78909c, #546e7a)" }} />
+                      <div className="w-9 h-[3px] rounded-full" style={{ background: "#546e7a" }} />
+                      <div className="w-[52px] h-[6px] rounded-full mt-1 shadow-md" style={{ background: "linear-gradient(to right, #78909c, #b0bec5, #78909c)" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {chat.length === 0 && phase !== "ready" && phase !== "init" && (
+                <p className="text-sm text-slate-400 italic text-center py-2">Waiting for conversation…</p>
+              )}
+
+              {chat.map((msg) => {
+                const isUser = msg.role === "user";
+                return (
+                  <div key={msg.id} className={isUser ? "flex justify-end" : "flex justify-start"}>
+                    <div
+                      className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                        isUser
+                          ? "bg-green-500 text-white rounded-br-md"
+                          : "bg-white/80 border border-slate-200 text-slate-700 rounded-bl-md shadow-sm"
+                      }`}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-wider opacity-60 mb-1">
+                        {isUser ? "You" : "Agent"}
+                      </p>
+                      <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="shrink-0 flex flex-col items-center gap-2 relative z-10">
+              <button
+                type="button"
+                disabled={centerButtonDisabled}
+                onClick={handleCenterButton}
+                className={`font-bold rounded-full px-12 py-2.5 text-base transition-all duration-150 shadow-lg active:scale-95 ${
+                  centerButtonDisabled
+                    ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
+                    : isRecording
+                      ? "bg-red-500 hover:bg-red-600 text-white"
+                      : phase === "done"
+                        ? "bg-emerald-500 hover:bg-emerald-600 text-white"
+                        : "bg-green-500 hover:bg-green-600 text-white"
+                }`}
+                style={
+                  centerButtonDisabled
+                    ? undefined
+                    : { boxShadow: isRecording ? "0 4px 18px rgba(239,68,68,0.35)" : "0 4px 18px rgba(34,197,94,0.40)" }
+                }
+              >
+                {centerButtonLabel}
+              </button>
+              <p className="text-sm text-slate-500 text-center max-w-sm">{sessionHint}</p>
+            </div>
+          </div>
+
+          {/* Right — Services or form */}
+          <div className={`shrink-0 min-h-0 overflow-y-auto ${hasActiveForm ? "flex-1 min-w-0" : "w-[310px]"}`}>
             {phase === "loading_schema" ? (
-              /* Playwright is extracting the live form schema */
-              <div className="glass-panel rounded-3xl flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
-                <i className="fa-solid fa-spinner fa-spin text-3xl text-brand-400" />
-                <p className="text-sm text-slate-300">
+              <div className={`${glassCard} h-full flex flex-col items-center justify-center gap-4 p-8 text-center`} style={glassStyle}>
+                <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center">
+                  <i className="fa-solid fa-spinner fa-spin text-2xl text-green-500" />
+                </div>
+                <p className="text-sm font-semibold text-slate-700">
                   Reading {serviceTitle || "form"} fields from the portal…
                 </p>
-                <p className="text-xs text-slate-500">
-                  Playwright is extracting labels, IDs, and field types live.
-                </p>
+                <p className="text-xs text-slate-400">Playwright is extracting labels, IDs, and field types live.</p>
               </div>
-            ) : !hasActiveForm ? (
-              /* Government service picker — the URL and schema for each are
-                 resolved by the backend, not hardcoded here. */
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
-                {SERVICES.map((s, i) => (
-                  <button
-                    key={s.key}
-                    type="button"
-                    onClick={() => handleFormCardClick(s.key)}
-                    disabled={phase === "init"}
-                    className={`glass-panel rounded-3xl p-5 text-left flex flex-col gap-3 border border-slate-800/80 transition-all duration-200 ${phase === "init"
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:border-slate-600/60 hover:scale-[1.015] active:scale-[0.985] cursor-pointer"
-                      }`}
-                  >
-                    <div
-                      className={`w-12 h-12 rounded-2xl bg-gradient-to-tr ${i % 2 === 0
-                        ? "from-blue-600 to-indigo-600"
-                        : "from-purple-600 to-pink-600"
-                        } flex items-center justify-center shadow-lg`}
-                    >
-                      <i className="fa-solid fa-file-lines text-white text-xl" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">
-                        Government Service
-                      </p>
-                      <h3 className="text-sm font-bold text-white">{s.label}</h3>
-                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                        Fields are read live from the portal via Playwright.
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              /* Active form being filled */
-              <div className="glass-panel rounded-3xl overflow-hidden flex flex-col flex-1">
-                {/* Form header */}
-                <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center gap-3">
+            ) : hasActiveForm ? (
+              <div className={`${glassCard} overflow-hidden flex flex-col h-full`} style={glassStyle}>
+                <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-5 py-4 flex items-center gap-3 shrink-0">
                   <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
                     <i className="fa-solid fa-file-lines text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">
-                      Live Portal Schema
-                    </p>
-                    <h2 className="text-sm font-bold text-white">
-                      {serviceTitle}
-                    </h2>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">Live Portal Schema</p>
+                    <h2 className="text-sm font-bold text-white">{serviceTitle}</h2>
                     {lang && lang !== "en" && (
-                      <p className="text-[9px] text-white/50 mt-0.5">
-                        Voice: {LANG_LABELS[lang]} · Form filled in English
-                      </p>
+                      <p className="text-[9px] text-white/50 mt-0.5">Voice: {LANG_LABELS[lang]} · Form filled in English</p>
                     )}
                   </div>
                   <div className="text-right flex-shrink-0">
@@ -1711,96 +1719,91 @@ JSON:`;
                     <div className="w-20 h-1 bg-white/20 rounded-full mt-1 overflow-hidden">
                       <div
                         className="h-full bg-white/70 rounded-full transition-all duration-500"
-                        style={{
-                          width: `${Math.round(
-                            (Math.min(fieldIdx, allFields.length) /
-                              allFields.length) *
-                            100
-                          )}%`,
-                        }}
+                        style={{ width: `${Math.round((Math.min(fieldIdx, allFields.length) / allFields.length) * 100)}%` }}
                       />
                     </div>
                   </div>
                 </div>
-
-                {/* Extracted fields */}
                 <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {allFields.map((field) => {
                       const value = formData[field.id];
-                      const isActive =
-                        currField?.id === field.id && phase === "collecting";
-                      const isBeingCorrected =
-                        corrFieldId === field.id &&
-                        phase === "correction_value";
+                      const isActive = currField?.id === field.id && phase === "collecting";
+                      const isBeingCorrected = corrFieldId === field.id && phase === "correction_value";
                       const isFilled = !!value;
-
                       return (
                         <div
                           key={field.id}
-                          className={`rounded-xl border p-3 transition-all duration-300 ${isActive || isBeingCorrected
-                            ? "border-brand-500/60 bg-brand-500/10 shadow-sm shadow-brand-500/10"
-                            : isFilled
-                              ? "border-emerald-500/25 bg-emerald-500/5"
-                              : "border-slate-800/50 bg-slate-900/30"
-                            }`}
+                          className={`rounded-xl border p-3 transition-all duration-300 ${
+                            isActive || isBeingCorrected
+                              ? "border-green-400/60 bg-green-50 shadow-sm"
+                              : isFilled
+                                ? "border-emerald-300/50 bg-emerald-50/60"
+                                : "border-slate-200/60 bg-white/60"
+                          }`}
                         >
                           <label
-                            className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isActive || isBeingCorrected
-                              ? "text-brand-400"
-                              : isFilled
-                                ? "text-emerald-400"
-                                : "text-slate-600"
-                              }`}
+                            className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${
+                              isActive || isBeingCorrected ? "text-green-600" : isFilled ? "text-emerald-600" : "text-slate-400"
+                            }`}
                           >
                             {field.label}
-                            {(isActive || isBeingCorrected) && (
-                              <span className="ml-1.5 animate-pulse">●</span>
-                            )}
+                            {(isActive || isBeingCorrected) && <span className="ml-1.5 animate-pulse">●</span>}
                           </label>
-                          <div
-                            className={`text-xs font-mono leading-snug min-h-[18px] ${isFilled
-                              ? "text-slate-100"
-                              : "text-slate-600 italic"
-                              }`}
-                          >
-                            {isFilled
-                              ? value
-                              : field.placeholder || `#${field.id}`}
+                          <div className={`text-xs font-mono leading-snug min-h-[18px] ${isFilled ? "text-slate-700" : "text-slate-400 italic"}`}>
+                            {isFilled ? value : field.placeholder || `#${field.id}`}
                           </div>
                         </div>
                       );
                     })}
                   </div>
-
-                  {/* Done state */}
                   {phase === "done" && (
-                    <div className="mt-1 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-3">
-                      <i className="fa-solid fa-circle-check text-emerald-400 text-2xl flex-shrink-0" />
+                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-3">
+                      <i className="fa-solid fa-circle-check text-emerald-500 text-2xl flex-shrink-0" />
                       <div>
-                        <p className="text-sm font-semibold text-emerald-300">
-                          Form Submitted Successfully
-                        </p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Session data exists only in memory and is cleared when
-                          you start a new session.
+                        <p className="text-sm font-semibold text-emerald-700">Form Submitted Successfully</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Session data exists only in memory and is cleared when you start a new session.
                         </p>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 content-start">
+                {SERVICES.map((s, i) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => handleFormCardClick(s.key)}
+                    disabled={phase === "init"}
+                    className={`${glassCard} p-4 text-left flex flex-col gap-1 transition-all duration-150${
+                      i === 2 ? " col-span-2" : ""
+                    } ${phase === "init" ? "opacity-40 cursor-not-allowed" : "hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] cursor-pointer"}`}
+                    style={glassStyle}
+                  >
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-2 ${i === 0 ? "bg-blue-100" : i === 1 ? "bg-teal-100" : "bg-indigo-100"}`}>
+                      <i className={`fa-solid fa-file-lines text-lg ${i === 0 ? "text-blue-600" : i === 1 ? "text-teal-600" : "text-indigo-600"}`} />
+                    </div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Government Services</p>
+                    <h3 className="text-sm font-bold text-slate-800 leading-snug">{s.label}</h3>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">Fields are read live via Playwright.</p>
+                    <div
+                      className="mt-2 self-start text-xs font-medium text-slate-600 rounded-lg px-3 py-1.5"
+                      style={{ border: "1px solid rgba(203,213,225,0.9)", background: "rgba(255,255,255,0.5)" }}
+                    >
+                      {i === 2 ? "Start Session" : "Action Session"}
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
-          </section>
-        </div>
-
-        {/* Footer */}
-        <footer className="text-center text-xs text-slate-700 pt-4 border-t border-slate-800/30">
-          EchoJSON · On-device WebGPU · Gemma 4 E2B · Session-scoped · No data
-          persisted
-        </footer>
+          </div>
+        </main>
       </div>
-    </>
+    </div>
   );
 }
+
 
