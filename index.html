@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EchoJSON — On-Device WebGPU Audio Inference</title>
+
+  <!-- SEO Meta Tags -->
+  <meta name="description"
+    content="A premium on-device WebGPU-accelerated JSON entity extraction from live audio using Transformers.js v3 and Google's Gemma 4 E2B model.">
+  <meta name="keywords" content="WebGPU, Transformers.js, Gemma 4, Audio Inference, Web Audio API, Local LLM">
+
+  <!-- Google Fonts & FontAwesome -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Outfit', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              900: '#312e81',
+            },
+            dark: {
+              50: '#f8fafc',
+              900: '#090d16',
+              950: '#05070c',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'ripple': 'ripple 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
+          },
+          keyframes: {
+            ripple: {
+              '0%': { transform: 'scale(1)', opacity: '0.4' },
+              '100%': { transform: 'scale(1.8)', opacity: '0' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style type="text/css">
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.1);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(99, 102, 241, 0.3);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(99, 102, 241, 0.5);
+    }
+
+    /* Glassmorphism utility */
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Radial Glow Spheres */
+    .glow-sphere {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      z-index: -1;
+      opacity: 0.15;
+    }
+
+    /* Live streaming caret */
+    .stream-caret::after {
+      content: '▍';
+      display: inline-block;
+      margin-left: 1px;
+      animation: caret-blink 0.9s steps(1) infinite;
+      color: currentColor;
+      opacity: 0.7;
+    }
+
+    @keyframes caret-blink {
+
+      0%,
+      49% {
+        opacity: 0.7;
+      }
+
+      50%,
+      100% {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+
+<body
+  class="h-full bg-dark-950 text-slate-100 flex flex-col font-sans overflow-x-hidden selection:bg-brand-500 selection:text-white">
+
+  <!-- Glow effects -->
+  <div class="glow-sphere w-[400px] h-[400px] bg-brand-500 top-[-100px] left-[-100px] animate-pulse-slow"></div>
+  <div class="glow-sphere w-[500px] h-[500px] bg-purple-500 bottom-[-150px] right-[-150px] animate-pulse-slow"
+    style="animation-delay: 1.5s;"></div>
+
+  <!-- App Container -->
+  <div class="flex-1 flex flex-col max-w-7xl w-full mx-auto px-4 py-8 md:py-12 justify-between gap-8">
+
+    <!-- Header -->
+    <header
+      class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800/60 pb-6">
+      <div class="flex items-center gap-3">
+        <div
+          class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-purple-600 flex items-center justify-center shadow-lg shadow-brand-500/20">
+          <i class="fa-solid fa-microphone-lines text-white text-lg"></i>
+        </div>
+        <div>
+          <h1
+            class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
+            EchoJSON</h1>
+          <p class="text-xs text-slate-400">On-Device WebGPU Audio Extraction (Gemma 4 E2B)</p>
+        </div>
+      </div>
+
+      <!-- Status Badge & WebGPU check -->
+      <div class="flex items-center gap-3">
+        <span id="webgpu-badge"
+          class="hidden text-[10px] uppercase font-semibold px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          WebGPU Active
+        </span>
+        <div id="status-badge"
+          class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700/80">
+          <span class="relative flex h-2.5 w-2.5">
+            <span id="status-dot-pulse"
+              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+            <span id="status-dot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+          </span>
+          <span id="status-text" class="text-xs font-medium text-slate-300">Loading Environment</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Error Banner (Hidden by default) -->
+    <div id="error-banner" class="hidden transform translate-y-[-10px] transition-all duration-300">
+      <div
+        class="bg-red-500/10 border border-red-500/30 text-red-200 px-4 py-3.5 rounded-2xl flex items-start gap-3 shadow-lg">
+        <i class="fa-solid fa-circle-exclamation text-red-400 text-lg mt-0.5"></i>
+        <div class="flex-1">
+          <h3 class="font-semibold text-sm">System Alert</h3>
+          <p id="error-message" class="text-xs text-red-300/90 mt-0.5"></p>
+        </div>
+        <button onclick="document.getElementById('error-banner').classList.add('hidden')"
+          class="text-red-400 hover:text-red-300 transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch my-auto">
+
+      <!-- Left Panel: Interactive Console -->
+      <section class="lg:col-span-5 flex flex-col justify-center gap-6">
+
+        <!-- Welcome & Info Card -->
+        <div class="glass-panel p-6 rounded-3xl relative overflow-hidden">
+          <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+            <i class="fa-solid fa-wand-magic-sparkles text-brand-500"></i>
+            How it works
+          </h2>
+          <p class="text-sm text-slate-300 mt-2 leading-relaxed">
+            Talk to Gemma to fill out the form. Gemma will ask follow-up questions for your Name, City, and Action. Once
+            all details are gathered, review them and click "Confirm" to run Playwright automation. Everything runs
+            locally on WebGPU, and responses stream live token-by-token.
+          </p>
+          <div class="mt-4 flex gap-4 text-xs text-slate-400">
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-brand-500"></i> 100%
+              Private</span>
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-bolt text-brand-500"></i> WebGPU Speed</span>
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-wave-square text-brand-500"></i> Live
+              Streaming</span>
+          </div>
+        </div>
+
+        <!-- Download Monitor -->
+        <div id="download-panel" class="glass-panel p-6 rounded-3xl flex flex-col gap-4">
+          <div class="flex justify-between items-center">
+            <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+              <i class="fa-solid fa-download animate-bounce text-brand-500"></i>
+              Downloading Model Chunks
+            </h3>
+            <span id="download-global-pct" class="text-xs text-brand-400 font-mono">0%</span>
+          </div>
+          <p class="text-xs text-slate-400">
+            Downloading the 1.5GB model (Gemma 4 E2B Q4F16). These files will be stored in your browser's local cache.
+          </p>
+
+          <!-- Individual progress bars list -->
+          <div id="progress-container" class="flex flex-col gap-3 max-h-[180px] overflow-y-auto pr-1">
+            <!-- Dynamically populated -->
+            <div class="text-center py-4 text-slate-500 text-xs italic">
+              Initializing downloads...
+            </div>
+          </div>
+        </div>
+
+        <!-- Microphone Interactive Card / Voice Chat Window -->
+        <div id="interactive-panel"
+          class="hidden glass-panel p-6 rounded-3xl flex flex-col justify-between gap-6 relative overflow-hidden min-h-[450px]">
+          <!-- Real-time Canvas Visualizer -->
+          <canvas id="visualizer"
+            class="absolute inset-0 w-full h-full opacity-10 pointer-events-none rounded-3xl"></canvas>
+
+          <div class="z-10 flex flex-col gap-4 w-full h-full justify-between">
+            <!-- Chat Bubble Thread Window -->
+            <div id="chat-messages"
+              class="w-full flex flex-col gap-3 max-h-[300px] min-h-[220px] overflow-y-auto pr-1 select-text scrollbar-thin">
+              <!-- Initial Greeting (Placeholder until loaded) -->
+              <div class="flex justify-start">
+                <div
+                  class="max-w-[85%] bg-slate-800/80 border border-slate-700/50 rounded-2xl rounded-bl-none px-4 py-2.5 text-xs text-slate-200 shadow-md">
+                  Initializing the voice assistant...
+                </div>
+              </div>
+            </div>
+
+            <!-- Verification Drawer (Hidden by default) -->
+            <div id="confirm-panel"
+              class="hidden w-full bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 flex flex-col gap-3.5">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-clipboard-check"></i> Verify Details
+              </h4>
+              <div class="grid grid-cols-3 gap-2.5 text-[11px]">
+                <div>
+                  <label class="block font-semibold text-slate-400 mb-1">Name</label>
+                  <input type="text" id="confirm-name"
+                    class="w-full bg-slate-900 border border-slate-850 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                  <label class="block font-semibold text-slate-400 mb-1">City</label>
+                  <input type="text" id="confirm-city"
+                    class="w-full bg-slate-900 border border-slate-850 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                  <label class="block font-semibold text-slate-400 mb-1">Action</label>
+                  <input type="text" id="confirm-action"
+                    class="w-full bg-slate-900 border border-slate-850 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                </div>
+              </div>
+              <div class="flex gap-2.5">
+                <button id="btn-confirm-submit"
+                  class="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-white tracking-wide transition shadow-lg shadow-indigo-600/10 active:scale-95 text-[11px]">
+                  Confirm & Fill Form
+                </button>
+                <button id="btn-confirm-restart"
+                  class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-400 hover:text-slate-200 transition active:scale-95 text-[11px]">
+                  Restart Chat
+                </button>
+              </div>
+            </div>
+
+            <!-- Recording Status & Controls Row -->
+            <div id="controls-section"
+              class="flex flex-col items-center gap-3 border-t border-slate-800/40 pt-4 w-full">
+              <!-- Dynamic Instruction & Duration -->
+              <div class="text-center">
+                <p id="instruction-text" class="text-xs font-semibold text-slate-300">Wait for model initialization</p>
+                <p id="audio-duration" class="text-[10px] text-slate-400 font-mono mt-1 hidden">Duration: 0.0s</p>
+              </div>
+
+              <!-- Controls Row -->
+              <div class="flex items-center justify-center gap-4 w-full">
+
+                <!-- Pause/Resume Button (Hidden initially) -->
+                <button id="pause-btn"
+                  class="hidden w-12 h-12 rounded-full bg-slate-900/60 hover:bg-slate-800/80 border border-slate-700/60 text-slate-300 flex items-center justify-center shadow-lg transition duration-150 active:scale-95 hover:text-white cursor-pointer"
+                  title="Pause recording">
+                  <i id="pause-btn-icon" class="fa-solid fa-pause text-base"></i>
+                </button>
+
+                <!-- Main Record/Stop Button -->
+                <div class="relative">
+                  <!-- Animated outer ripple -->
+                  <div id="ripple-effect" class="hidden absolute inset-0 rounded-full bg-brand-500/20 animate-ripple">
+                  </div>
+
+                  <button id="speak-btn"
+                    class="w-24 h-24 rounded-full bg-gradient-to-tr from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white flex flex-col items-center justify-center gap-1 shadow-2xl shadow-brand-500/30 transition duration-150 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none"
+                    disabled>
+                    <i id="main-btn-icon" class="fa-solid fa-microphone text-xl"></i>
+                    <span id="btn-label" class="text-[9px] font-bold uppercase tracking-wider">Loading</span>
+                  </button>
+                </div>
+
+                <!-- Cancel Button (Hidden initially) -->
+                <button id="cancel-btn"
+                  class="hidden w-12 h-12 rounded-full bg-slate-900/60 hover:bg-red-950/40 border border-slate-700/60 hover:border-red-900/40 text-slate-400 hover:text-red-400 flex items-center justify-center shadow-lg transition duration-150 active:scale-95 cursor-pointer"
+                  title="Cancel recording">
+                  <i class="fa-solid fa-trash-can text-base"></i>
+                </button>
+
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Right Panel: Code block output -->
+      <section
+        class="lg:col-span-7 flex flex-col justify-between glass-panel rounded-3xl border border-slate-800/80 overflow-hidden min-h-[450px]">
+
+        <!-- Header Bar -->
+        <div class="bg-slate-900/80 px-6 py-4 flex justify-between items-center border-b border-slate-800/60">
+          <div class="flex items-center gap-2">
+            <span class="flex gap-1.5">
+              <span class="w-3 h-3 rounded-full bg-red-500/30 border border-red-500/50"></span>
+              <span class="w-3 h-3 rounded-full bg-amber-500/30 border border-amber-500/50"></span>
+              <span class="w-3 h-3 rounded-full bg-emerald-500/30 border border-emerald-500/50"></span>
+            </span>
+            <span
+              class="text-xs font-semibold text-slate-400 font-mono ml-2 uppercase tracking-wide">output_payload.json</span>
+          </div>
+
+          <button id="copy-btn" onclick="copyJSON()"
+            class="text-xs text-slate-400 hover:text-white transition flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700/60 disabled:opacity-40"
+            disabled>
+            <i class="fa-regular fa-copy"></i>
+            <span>Copy</span>
+          </button>
+        </div>
+
+        <!-- Code Block Content -->
+        <div class="flex-1 p-6 font-mono text-sm leading-relaxed overflow-y-auto bg-slate-950/40 relative">
+          <pre
+            class="h-full"><code id="json-code" class="text-slate-400 block whitespace-pre-wrap select-all">{}</code></pre>
+        </div>
+
+        <!-- Stats Bar Footer -->
+        <div
+          class="bg-slate-900/40 px-6 py-3 flex flex-wrap justify-between gap-4 text-xs font-mono text-slate-500 border-t border-slate-800/60">
+          <span id="stat-audio-time">Audio: --</span>
+          <span id="stat-proc-time">Processing: --</span>
+          <span id="stat-generation-speed">Speed: --</span>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="text-center text-xs text-slate-600 pt-6 border-t border-slate-800/30">
+      EchoJSON. Running entirely client-side. Google Gemma 4 E2B IT. Powered by WebGPU and Transformers.js v3.
+    </footer>
+  </div>
+
+  <!-- ESM Application Logic -->
+  <script type="module">
+    // Load Transformers.js v3 from CDN
+    const HF_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
+
+    // Check WebGPU compatibility
+    if (navigator.gpu) {
+      document.getElementById('webgpu-badge').classList.remove('hidden');
+    } else {
+      showError("WebGPU is not supported in this browser. EchoJSON requires WebGPU to execute locally. Please use Chrome 113+, Edge 113+, or another compatible browser and ensure hardware acceleration is enabled.");
+    }
+
+    let processor, model, TextStreamerClass;
+    let isModelLoaded = false;
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+    let isPaused = false;
+    let totalRecordedMs = 0;
+    let lastResumeTime = null;
+    let audioCtx, analyser, visualizerInterval;
+    let isSessionActive = false;
+    let isSpeaking = false;
+    let silenceStart = null;
+    let isReady = false;
+
+    // Conversational State and Prompts
+    let chatHistory = [];
+
+    const systemPrompt = `You are a helpful local voice assistant. You are helping the user fill out a registration form.
+The form requires exactly three fields:
+1. Name (First name of the speaker)
+2. City (Location they reside in)
+3. Action (The type of action or card request they need)
+
+Your goal is to gather these three details:
+- At the start, greet the user and ask for their name.
+- If any of Name, City, or Action is missing, ask a single, short, friendly question to collect the missing details.
+- Once Name, City, and Action are all successfully collected, print them in a strict JSON format with key "ready": true, like this:
+{
+  "ready": true,
+  "name": "extracted_name",
+  "city": "extracted_city",
+  "action": "extracted_action"
+}
+Confirm the details to the user and explain that they can review them below and click the confirm button to fill the form.
+
+Keep your spoken responses extremely brief and simple. Do not explain your logic. Only respond with conversation.`;
+
+    // Set UI state helper
+    function setStatus(state, msg = '') {
+      const badge = document.getElementById('status-badge');
+      const dot = document.getElementById('status-dot');
+      const dotPulse = document.getElementById('status-dot-pulse');
+      const text = document.getElementById('status-text');
+
+      dotPulse.className = 'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ';
+
+      switch (state) {
+        case 'loading':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500';
+          dotPulse.classList.add('bg-amber-400');
+          text.textContent = msg || 'Loading Model';
+          break;
+        case 'ready':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500';
+          dotPulse.classList.add('bg-emerald-400');
+          text.textContent = 'Ready';
+          break;
+        case 'recording':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500';
+          dotPulse.classList.add('bg-red-400');
+          text.textContent = 'Recording';
+          break;
+        case 'paused':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500 animate-pulse';
+          dotPulse.className = 'hidden';
+          text.textContent = 'Paused';
+          break;
+        case 'transcribing':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500';
+          dotPulse.classList.add('bg-indigo-400');
+          text.textContent = 'Transcribing Live';
+          break;
+        case 'processing':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500';
+          dotPulse.classList.add('bg-indigo-400');
+          text.textContent = 'Gemma Responding';
+          break;
+        case 'error':
+          dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600';
+          dotPulse.className = 'hidden';
+          text.textContent = 'System Error';
+          break;
+      }
+    }
+
+    function showError(err) {
+      const banner = document.getElementById('error-banner');
+      const msg = document.getElementById('error-message');
+      msg.textContent = typeof err === 'string' ? err : err.message || JSON.stringify(err);
+      banner.classList.remove('hidden');
+      setStatus('error');
+    }
+
+    // Initialize Transformers.js and Model
+    async function initModel() {
+      try {
+        setStatus('loading', 'Importing ML Framework');
+
+        // Import env and core classes from CDN
+        const { env, AutoProcessor, Gemma4ForConditionalGeneration, TextStreamer } = await import(HF_CDN);
+        TextStreamerClass = TextStreamer;
+
+        // Browser environment setup
+        env.allowLocalModels = false;
+
+        setStatus('loading', 'Loading Model Components');
+
+        const model_id = "onnx-community/gemma-4-E2B-it-ONNX";
+
+        // Map to keep track of loading progress per file
+        const progressMap = new Map();
+        const progressContainer = document.getElementById('progress-container');
+
+        const updateUIProgress = () => {
+          let totalBytes = 0;
+          let loadedBytes = 0;
+          let anyProgress = false;
+
+          progressContainer.innerHTML = '';
+
+          progressMap.forEach((val, key) => {
+            if (val.total > 0) {
+              totalBytes += val.total;
+              loadedBytes += val.loaded;
+              anyProgress = true;
+            }
+
+            // Build progress item row
+            const percent = val.total > 0 ? Math.round((val.loaded / val.total) * 100) : 0;
+            const item = document.createElement('div');
+            item.className = 'text-xs border-b border-slate-800/40 pb-2';
+            item.innerHTML = `
+              <div class="flex justify-between items-center mb-1 text-[11px]">
+                <span class="text-slate-300 font-mono truncate max-w-[200px]" title="${key}">${key.split('/').pop()}</span>
+                <span class="text-slate-400 font-mono">${percent}%</span>
+              </div>
+              <div class="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
+                <div class="bg-brand-500 h-full transition-all duration-150" style="width: ${percent}%"></div>
+              </div>
+            `;
+            progressContainer.appendChild(item);
+          });
+
+          if (anyProgress && totalBytes > 0) {
+            const globalPct = Math.round((loadedBytes / totalBytes) * 100);
+            document.getElementById('download-global-pct').textContent = `${globalPct}%`;
+          }
+        };
+
+        const progress_callback = (data) => {
+          if (data.status === 'init') {
+            progressMap.set(data.file, { loaded: 0, total: 0 });
+            updateUIProgress();
+          } else if (data.status === 'progress') {
+            progressMap.set(data.file, { loaded: data.loaded, total: data.total });
+            updateUIProgress();
+          } else if (data.status === 'ready') {
+            progressMap.set(data.file, { loaded: 1, total: 1 }); // Mark complete
+            updateUIProgress();
+          }
+        };
+
+        // Initialize Processor
+        processor = await AutoProcessor.from_pretrained(model_id, { progress_callback });
+
+        // Initialize Model with WebGPU and Q4F16
+        model = await Gemma4ForConditionalGeneration.from_pretrained(model_id, {
+          dtype: 'q4f16',
+          device: 'webgpu',
+          progress_callback
+        });
+
+        isModelLoaded = true;
+
+        // Transition panel visibility
+        document.getElementById('download-panel').classList.add('hidden');
+        const interactivePanel = document.getElementById('interactive-panel');
+        interactivePanel.classList.remove('hidden');
+
+        // Configure Speak Button and Chat Initial state
+        const speakBtn = document.getElementById('speak-btn');
+        speakBtn.removeAttribute('disabled');
+        document.getElementById('main-btn-icon').className = 'fa-solid fa-microphone text-xl';
+        document.getElementById('btn-label').textContent = 'Start';
+        document.getElementById('instruction-text').textContent = 'Click Start to start continuous session';
+
+        // Start conversation
+        startConversation();
+
+        setStatus('ready');
+      } catch (err) {
+        console.error(err);
+        showError(err);
+      }
+    }
+
+    // Call init on load
+    window.addEventListener('DOMContentLoaded', initModel);
+
+    // Audio Visualizer Canvas Renderer
+    function drawVisualizer() {
+      const canvas = document.getElementById('visualizer');
+      const canvasCtx = canvas.getContext('2d');
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const draw = () => {
+        if (!isRecording) return;
+        requestAnimationFrame(draw);
+
+        if (isPaused || isSpeaking) {
+          // Slow fade out visualizer
+          canvasCtx.fillStyle = 'rgba(9, 13, 22, 0.08)';
+          canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+          return;
+        }
+
+        // --- Silence Detection ---
+        const floatData = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(floatData);
+        let sum = 0;
+        for (let i = 0; i < floatData.length; i++) {
+          sum += floatData[i] * floatData[i];
+        }
+        const rms = Math.sqrt(sum / floatData.length);
+
+        const SILENCE_THRESHOLD = 0.015; // Silence threshold
+        const SILENCE_DURATION_MS = 1500;  // 1.5 seconds of silence
+
+        if (rms < SILENCE_THRESHOLD) {
+          if (!silenceStart) {
+            silenceStart = Date.now();
+          } else if (Date.now() - silenceStart > SILENCE_DURATION_MS) {
+            console.log("Silence detected. Committing turn automatically...");
+            silenceStart = null;
+            stopRecordingTurn();
+            return;
+          }
+        } else {
+          silenceStart = null;
+        }
+        // -------------------------
+
+        analyser.getByteFrequencyData(dataArray);
+
+        canvasCtx.fillStyle = 'rgba(9, 13, 22, 0.4)'; // match dark-900 background with trail opacity
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.2;
+        let barHeight;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
+
+          const gradient = canvasCtx.createLinearGradient(0, canvas.height, 0, canvas.height - barHeight);
+          gradient.addColorStop(0, 'rgba(99, 102, 241, 0.2)');
+          gradient.addColorStop(1, 'rgba(168, 85, 247, 0.6)');
+
+          canvasCtx.fillStyle = gradient;
+          canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+
+          x += barWidth;
+        }
+      };
+
+      // Resize canvas to match container size
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+
+      draw();
+    }
+
+    // Dialogue State Helpers
+    function startConversation() {
+      chatHistory = [
+        { role: "system", content: systemPrompt }
+      ];
+
+      const greeting = "Hello! I can help you fill out the registration form. What is your name?";
+      chatHistory.push({ role: "assistant", content: greeting });
+
+      // Clear UI messages and draw the first bubble
+      const chatContainer = document.getElementById('chat-messages');
+      chatContainer.innerHTML = '';
+      appendChatBubble('assistant', greeting);
+      speakText(greeting);
+    }
+
+    function appendChatBubble(role, content) {
+      const container = document.getElementById('chat-messages');
+      const wrapper = document.createElement('div');
+      wrapper.className = role === 'user' ? 'flex justify-end w-full' : 'flex justify-start w-full';
+
+      const bubble = document.createElement('div');
+      bubble.className = role === 'user'
+        ? 'max-w-[85%] bg-gradient-to-tr from-brand-600 to-purple-600 text-white rounded-2xl rounded-br-none px-4 py-2.5 text-xs shadow-md select-text'
+        : 'max-w-[85%] bg-slate-800/80 border border-slate-700/50 text-slate-200 rounded-2xl rounded-bl-none px-4 py-2.5 text-xs shadow-md select-text';
+
+      bubble.textContent = content;
+      wrapper.appendChild(bubble);
+      container.appendChild(wrapper);
+
+      // Auto scroll to bottom
+      container.scrollTop = container.scrollHeight;
+      return bubble;
+    }
+
+    // Creates an empty bubble that gets filled in live as tokens stream in.
+    // Returns { bubble, update(text) } so callers can push partial text as it arrives.
+    function appendStreamingBubble(role) {
+      const bubble = appendChatBubble(role, '');
+      bubble.classList.add('stream-caret');
+      const container = document.getElementById('chat-messages');
+      return {
+        bubble,
+        update(text) {
+          bubble.textContent = text;
+          container.scrollTop = container.scrollHeight;
+        },
+        finish(finalText) {
+          bubble.classList.remove('stream-caret');
+          if (finalText !== undefined) bubble.textContent = finalText;
+        }
+      };
+    }
+       // Speech Synthesis with optional onComplete callbacks
+    function speakText(text, onComplete) {
+      if (!window.speechSynthesis) {
+        if (onComplete) setTimeout(onComplete, 1500);
+        return;
+      }
+
+      // Stop any active speaking
+      window.speechSynthesis.cancel();
+
+      // Clean text of any JSON bracket syntax
+      let spokenText = text.replace(/\{[^}]*\}/g, '').trim();
+      if (!spokenText) {
+        if (onComplete) setTimeout(onComplete, 500);
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const engVoice = voices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('google'))
+        || voices.find(v => v.lang.startsWith('en'));
+      if (engVoice) {
+        utterance.voice = engVoice;
+      }
+
+      if (onComplete) {
+        utterance.onend = () => onComplete();
+        utterance.onerror = () => onComplete();
+      }
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    // Capture Microphone and Setup Audio Pipeline for one turn
+    async function startRecordingTurn() {
+      if (!isModelLoaded || !isSessionActive || isReady) return;
+
+      audioChunks = [];
+      isRecording = true;
+      isPaused = false;
+      isSpeaking = false;
+      silenceStart = null;
+      totalRecordedMs = 0;
+      lastResumeTime = Date.now();
+
+      // Update UI button state
+      const speakBtn = document.getElementById('speak-btn');
+      speakBtn.className = "w-24 h-24 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex flex-col items-center justify-center gap-1 shadow-2xl shadow-indigo-600/30 transition duration-155 active:scale-95 cursor-pointer select-none";
+      document.getElementById('main-btn-icon').className = "fa-solid fa-microphone-lines text-xl animate-pulse";
+      document.getElementById('btn-label').textContent = 'Listening';
+      document.getElementById('ripple-effect').classList.remove('hidden');
+
+      // Show secondary controls
+      document.getElementById('pause-btn').classList.remove('hidden');
+      document.getElementById('pause-btn-icon').className = "fa-solid fa-pause text-base";
+      document.getElementById('pause-btn').title = "Pause session";
+      document.getElementById('cancel-btn').classList.remove('hidden');
+
+      document.getElementById('instruction-text').textContent = 'Speak naturally... Gemma responds when you pause.';
+
+      const durText = document.getElementById('audio-duration');
+      durText.classList.remove('hidden');
+      durText.textContent = `Duration: 0.0s`;
+
+      // Update duration timer text
+      if (visualizerInterval) clearInterval(visualizerInterval);
+      visualizerInterval = setInterval(() => {
+        if (!isPaused && !isSpeaking && lastResumeTime) {
+          const elapsedSinceResume = Date.now() - lastResumeTime;
+          const totalSec = ((totalRecordedMs + elapsedSinceResume) / 1000).toFixed(1);
+          durText.textContent = `Duration: ${totalSec}s`;
+        }
+      }, 100);
+
+      setStatus('recording');
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // Setup visualizer graph nodes
+        if (!audioCtx || audioCtx.state === 'closed') {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+        }
+
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        drawVisualizer();
+
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          clearInterval(visualizerInterval);
+          document.getElementById('ripple-effect').classList.add('hidden');
+
+          // Disable button and show thinking state
+          const speakBtn = document.getElementById('speak-btn');
+          speakBtn.setAttribute('disabled', 'true');
+          speakBtn.className = "w-24 h-24 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 text-slate-400 flex flex-col items-center justify-center gap-1 shadow-none transition duration-150 select-none cursor-not-allowed";
+          document.getElementById('main-btn-icon').className = "fa-solid fa-spinner animate-spin text-xl";
+          document.getElementById('btn-label').textContent = 'Thinking';
+
+          // Resample and process audio output
+          await processAudio();
+        };
+
+        mediaRecorder.start();
+      } catch (err) {
+        console.error(err);
+        showError("Microphone access denied or audio device capture failed: " + err.message);
+        cancelSession();
+      }
+    }
+
+    function stopRecordingTurn() {
+      if (!isRecording) return;
+      isRecording = false;
+
+      if (lastResumeTime) {
+        totalRecordedMs += Date.now() - lastResumeTime;
+        lastResumeTime = null;
+      }
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        // Stop audio tracks
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      }
+    }
+
+    function pauseSession() {
+      if (!isSessionActive || isPaused || !mediaRecorder) return;
+      isPaused = true;
+      mediaRecorder.pause();
+
+      if (lastResumeTime) {
+        totalRecordedMs += Date.now() - lastResumeTime;
+        lastResumeTime = null;
+      }
+
+      // Update UI
+      document.getElementById('pause-btn-icon').className = "fa-solid fa-play text-base text-emerald-400";
+      document.getElementById('pause-btn').title = "Resume session";
+      document.getElementById('ripple-effect').classList.add('hidden');
+      document.getElementById('instruction-text').textContent = 'Session paused';
+      document.getElementById('main-btn-icon').className = "fa-solid fa-microphone text-xl text-amber-500";
+      document.getElementById('btn-label').textContent = 'Paused';
+
+      setStatus('paused');
+    }
+
+    function resumeSession() {
+      if (!isSessionActive || !isPaused || !mediaRecorder) return;
+      isPaused = false;
+      lastResumeTime = Date.now();
+      mediaRecorder.resume();
+
+      // Update UI
+      document.getElementById('pause-btn-icon').className = "fa-solid fa-pause text-base";
+      document.getElementById('pause-btn').title = "Pause session";
+      document.getElementById('ripple-effect').classList.remove('hidden');
+      document.getElementById('instruction-text').textContent = 'Speak naturally... Gemma responds when you pause.';
+      document.getElementById('main-btn-icon').className = "fa-solid fa-microphone-lines text-xl animate-pulse";
+      document.getElementById('btn-label').textContent = 'Listening';
+
+      setStatus('recording');
+    }
+
+    function cancelSession() {
+      isSessionActive = false;
+      isRecording = false;
+      isPaused = false;
+      isSpeaking = false;
+      isReady = false;
+      silenceStart = null;
+      totalRecordedMs = 0;
+      lastResumeTime = null;
+      audioChunks = [];
+
+      clearInterval(visualizerInterval);
+      if (audioCtx && audioCtx.state !== 'closed') {
+        audioCtx.close();
+      }
+
+      resetUI();
+      startConversation();
+    }
+
+    // Convert Recorded Audio to 16kHz Float32Array & Run Transcription
+    async function processAudio() {
+      const audioDurationSec = (totalRecordedMs / 1000).toFixed(2);
+
+      if (audioChunks.length === 0) {
+        showError("No audio samples were captured. Please speak again.");
+        resetUI();
+        return;
+      }
+
+      setStatus('transcribing');
+      document.getElementById('instruction-text').textContent = 'Transcribing your voice live...';
+
+      try {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const arrayBuffer = await blob.arrayBuffer();
+        
+        // Start timers for stats
+        const tStartAudioProcess = performance.now();
+        
+        // Decode raw data
+        const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const originalBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+        
+        // High fidelity resampling via OfflineAudioContext (16000Hz mono)
+        const targetRate = 16000;
+        const targetLength = Math.round(originalBuffer.duration * targetRate);
+        const offlineCtx = new OfflineAudioContext(1, targetLength, targetRate);
+        
+        const source = offlineCtx.createBufferSource();
+        source.buffer = originalBuffer;
+        source.connect(offlineCtx.destination);
+        source.start();
+        
+        const resampledBuffer = await offlineCtx.startRendering();
+        const float32Array = resampledBuffer.getChannelData(0);
+        
+        const audioProcessMs = (performance.now() - tStartAudioProcess).toFixed(0);
+        document.getElementById('stat-audio-time').textContent = `Audio: ${audioDurationSec}s (Decoded: ${audioProcessMs}ms)`;
+
+        // 1. Transcribe voice input to text — streamed live into a bubble as tokens arrive
+        const liveBubble = appendStreamingBubble('user');
+        const transcription = await runTranscription(float32Array, liveBubble);
+        liveBubble.finish(transcription);
+        chatHistory.push({ role: 'user', content: transcription });
+
+        // 2. Process conversation dialogue next step
+        setStatus('processing');
+        document.getElementById('instruction-text').textContent = 'Gemma is responding live...';
+        await runDialogueStep();
+
+      } catch (err) {
+        console.error(err);
+        showError("Audio decoding or processing failed: " + err.message);
+        resetUI();
+      }
+    }
+
+    // Stage 1: Transcribe user audio waveform to text, streaming partial text live into liveBubble
+    async function runTranscription(audioData, liveBubble) {
+      try {
+        const messages = [
+          {
+            role: "user",
+            content: [
+              { type: "audio" },
+              {
+                type: "text",
+                text: "Transcribe the audio exactly. Do not add markdown annotations, notes, or conversational intros/outros. Return ONLY the verbatim transcribed text."
+              }
+            ]
+          }
+        ];
+
+        const formattedPrompt = processor.apply_chat_template(messages, {
+          add_generation_prompt: true,
+        });
+
+        const inputs = await processor(formattedPrompt, null, audioData, { add_special_tokens: false });
+
+        // Stream tokens live as they're generated instead of waiting for the full transcript
+        let streamedText = '';
+        const streamer = new TextStreamerClass(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk) => {
+            streamedText += chunk;
+            if (liveBubble) liveBubble.update(streamedText.trim() || '…');
+          }
+        });
+
+        const outputs = await model.generate({
+          ...inputs,
+          max_new_tokens: 150,
+          temperature: 0.1,
+          do_sample: false,
+          streamer
+        });
+
+        let transcription = streamedText.trim();
+
+        if (!transcription) {
+          // Fallback: decode full output in case the streamer produced nothing
+          const fullOutputText = processor.tokenizer.decode(outputs[0], { skip_special_tokens: true });
+          transcription = fullOutputText.trim();
+          const modelIdx = transcription.toLowerCase().lastIndexOf('model');
+          if (modelIdx !== -1) {
+            transcription = transcription.substring(modelIdx + 5).trim();
+          }
+        }
+
+        if (!transcription || transcription === 'model') {
+          transcription = "[voice recorded]";
+        }
+        return transcription;
+      } catch (e) {
+        console.warn("Transcription failed: ", e);
+        return "[voice recorded]";
+      }
+    }
+
+    // Stage 2: Evaluate chat memory and determine next assistant follow-up question or form ready state.
+    // Streams the assistant reply live into a chat bubble as tokens are generated.
+    async function runDialogueStep() {
+      const tStart = performance.now();
+      const liveBubble = appendStreamingBubble('assistant');
+      try {
+        const formattedPrompt = processor.apply_chat_template(chatHistory, {
+          add_generation_prompt: true,
+        });
+
+        // Run text prompt only (audioData is null)
+        const inputs = await processor(formattedPrompt, null, null, { add_special_tokens: false });
+
+        let streamedText = '';
+        const streamer = new TextStreamerClass(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk) => {
+            streamedText += chunk;
+            // While streaming, hide raw JSON braces from the live bubble so the
+            // user doesn't see the payload flash inside the chat text.
+            const displayChunk = streamedText.split('{')[0].trim();
+            liveBubble.update(displayChunk || streamedText.trim());
+          }
+        });
+
+        const outputs = await model.generate({
+          ...inputs,
+          max_new_tokens: 250,
+          temperature: 0.1,
+          do_sample: false,
+          streamer
+        });
+
+        let assistantResponse = streamedText.trim();
+        if (!assistantResponse) {
+          const fullOutputText = processor.tokenizer.decode(outputs[0], { skip_special_tokens: true });
+          assistantResponse = fullOutputText.trim();
+          const modelIdx = assistantResponse.toLowerCase().lastIndexOf('model');
+          if (modelIdx !== -1) {
+            assistantResponse = assistantResponse.substring(modelIdx + 5).trim();
+          }
+        }
+
+        // Check for JSON ready payload
+        const firstBrace = assistantResponse.indexOf('{');
+        const lastBrace = assistantResponse.lastIndexOf('}');
+        let jsonPayload = null;
+        let isReady = false;
+
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          const jsonText = assistantResponse.substring(firstBrace, lastBrace + 1);
+          try {
+            jsonPayload = JSON.parse(jsonText);
+            if (jsonPayload && jsonPayload.ready === true) {
+              isReady = true;
+            }
+          } catch (e) {
+            console.warn("Found JSON braces but failed to parse: ", e);
+          }
+        }
+
+        let displayResponse = assistantResponse;
+
+        if (isReady && jsonPayload) {
+          // Remove the raw JSON block from display text so the user only sees clean conversation
+          const beforeJSON = assistantResponse.substring(0, firstBrace).trim();
+          const afterJSON = assistantResponse.substring(lastBrace + 1).trim();
+          displayResponse = (beforeJSON + " " + afterJSON).trim();
+
+          if (!displayResponse || displayResponse === '{}') {
+            displayResponse = "I have successfully collected all required details! Please review them below and click confirm to submit.";
+          }
+
+          liveBubble.finish(displayResponse);
+          
+          // Print complete payload in code block for transparency
+          document.getElementById('json-code').textContent = JSON.stringify(jsonPayload, null, 2);
+          document.getElementById('json-code').className = "text-emerald-400 block whitespace-pre-wrap select-all";
+
+          // Populate fields
+          document.getElementById('confirm-name').value = jsonPayload.name || 'Mahika';
+          document.getElementById('confirm-city').value = jsonPayload.city || 'Delhi';
+          document.getElementById('confirm-action').value = jsonPayload.action || 'Verification';
+
+          speakText(displayResponse, () => {
+            isSessionActive = false;
+            document.getElementById('confirm-panel').classList.remove('hidden');
+            document.getElementById('controls-section').classList.add('hidden');
+            setStatus('ready');
+          });
+        } else {
+          // Normal conversational step
+          liveBubble.finish(displayResponse);
+          chatHistory.push({ role: 'assistant', content: displayResponse });
+
+          // Speed statistics
+          const totalSec = ((performance.now() - tStart) / 1000).toFixed(2);
+          const tokensCount = outputs[0].length - (inputs.input_ids ? inputs.input_ids.length : 0);
+          const speed = (tokensCount / totalSec).toFixed(1);
+
+          document.getElementById('stat-proc-time').textContent = `Chat: ${totalSec}s`;
+          document.getElementById('stat-generation-speed').textContent = `Speed: ${speed} tok/s (${tokensCount} tokens)`;
+
+          // Play audio response and start next turn on completion
+          isSpeaking = true;
+          speakText(displayResponse, () => {
+            isSpeaking = false;
+            if (isSessionActive && !isReady && !isPaused) {
+              startRecordingTurn();
+            }
+          });
+        }
+      } catch (err) {
+        liveBubble.finish("Sorry, something went wrong generating that response.");
+        showError("Dialogue processing failed: " + err.message);
+        resetUI();
+      }
+    }
+
+    // Reset UI state
+    function resetUI() {
+      const speakBtn = document.getElementById('speak-btn');
+      speakBtn.removeAttribute('disabled');
+      speakBtn.className = "w-24 h-24 rounded-full bg-gradient-to-tr from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white flex flex-col items-center justify-center gap-1 shadow-2xl shadow-brand-500/30 transition duration-150 active:scale-95 cursor-pointer select-none";
+      document.getElementById('main-btn-icon').className = "fa-solid fa-microphone text-xl";
+      document.getElementById('btn-label').textContent = 'Start';
+      document.getElementById('instruction-text').textContent = 'Click Record to start conversation';
+      document.getElementById('audio-duration').classList.add('hidden');
+      
+      document.getElementById('pause-btn').classList.add('hidden');
+      document.getElementById('cancel-btn').classList.add('hidden');
+      setStatus('ready');
+    }
+
+    // Attach click listeners for dialogue controls
+    const speakBtn = document.getElementById('speak-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
+
+    speakBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!isSessionActive) {
+        isSessionActive = true;
+        startRecordingTurn();
+      } else {
+        // Manually trigger commit during an active listening slice
+        if (isRecording && !isPaused && !isSpeaking) {
+          stopRecordingTurn();
+        }
+      }
+    });
+
+    pauseBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!isPaused) {
+        pauseSession();
+      } else {
+        resumeSession();
+      }
+    });
+
+    cancelBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      cancelSession();
+    });
+
+    // Confirm and Submit Form Automation
+    document.getElementById('btn-confirm-submit').addEventListener('click', async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById('btn-confirm-submit');
+      submitBtn.setAttribute('disabled', 'true');
+      submitBtn.textContent = 'Triggering automation...';
+
+      const name = document.getElementById('confirm-name').value;
+      const city = document.getElementById('confirm-city').value;
+      const action = document.getElementById('confirm-action').value;
+
+      try {
+        appendChatBubble('assistant', `Triggering browser form automation for: ${name}, ${city}, ${action}...`);
+
+        const response = await fetch('/api/fill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            First_Name: name,
+            City: city,
+            Action_Type: action
+          })
+        });
+
+        const result = await response.json();
+        console.log("Automation triggered successfully:", result);
+        appendChatBubble('assistant', "Automation script completed! The form has been submitted.");
+        speakText("Automation complete. The form has been submitted.");
+      } catch (err) {
+        console.error(err);
+        appendChatBubble('assistant', "Failed to trigger the automation script: " + err.message);
+      } finally {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = 'Confirm & Fill Form';
+      }
+    });
+
+    // Restart Conversation
+    document.getElementById('btn-confirm-restart').addEventListener('click', (e) => {
+      e.preventDefault();
+      isReady = false;
+      document.getElementById('confirm-panel').classList.add('hidden');
+      document.getElementById('controls-section').classList.remove('hidden');
+      startConversation();
+    });
+
+  </script>
+
+  <!-- Copy Button Helper -->
+  <script>
+    function copyJSON() {
+      const codeElement = document.getElementById('json-code');
+      const copyBtn = document.getElementById('copy-btn');
+
+      navigator.clipboard.writeText(codeElement.textContent)
+        .then(() => {
+          // Toast or label update
+          const originalHTML = copyBtn.innerHTML;
+          copyBtn.innerHTML = `<i class="fa-solid fa-check text-emerald-400"></i> <span class="text-emerald-400">Copied!</span>`;
+          copyBtn.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+
+          setTimeout(() => {
+            copyBtn.innerHTML = originalHTML;
+            copyBtn.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+          }, 2000);
+        })
+        .catch(err => {
+          console.error("Clipboard copy failed: ", err);
+        });
+    }
+  </script>
+</body>
+
+</html>

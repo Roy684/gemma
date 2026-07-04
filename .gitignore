@@ -1,0 +1,31 @@
+# Ignore virtual environment
+backend/gvenv
+venv/
+env/
+
+# Ignore Chroma DB (vector DB files)
+chroma_db/
+
+# Ignore dataset / raw data
+data/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code settings (optional)
+.vscode/
+
+
