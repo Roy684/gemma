@@ -28,4 +28,9 @@ Thumbs.db
 # VS Code settings (optional)
 .vscode/
 
+# Next.js
+node_modules/
+.next/
+out/
+
 
