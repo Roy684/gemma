@@ -261,15 +261,6 @@
         </div>
       </form>
 
-      <!-- Submitted Result Display -->
-      <div id="result-display" class="hidden bg-emerald-50 border border-emerald-100 rounded-3xl p-6 flex flex-col gap-3">
-        <div class="flex items-center gap-2 text-emerald-800">
-          <i class="fa-solid fa-circle-check text-xl"></i>
-          <span class="text-sm font-bold">Registry Form Successfully Filled &amp; Submitted!</span>
-        </div>
-        <pre id="submitted-json" class="text-[10px] font-mono text-emerald-950 overflow-x-auto p-4 bg-emerald-950/5 rounded-xl border border-emerald-900/10"></pre>
-      </div>
-
     </main>
   </div>
 
@@ -333,13 +324,9 @@
     function handleSubmit(e) {
       e.preventDefault();
       const form = document.getElementById('family-form');
-      const formData = new FormData(form);
-      const data = Object.fromEntries(formData.entries());
-      
-      data.declaration_accept = document.getElementById('declaration_accept').checked ? "Accepted" : "No";
-
-      document.getElementById('submitted-json').textContent = JSON.stringify(data, null, 2);
-      document.getElementById('result-display').classList.remove('hidden');
+      if (form.reportValidity()) {
+        window.location.reload();
+      }
     }
   </script>
 </body>

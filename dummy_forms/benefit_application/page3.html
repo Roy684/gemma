@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Benefit Application - Step 3</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-100 p-6 text-slate-800">
+  <div class="mx-auto max-w-2xl rounded-3xl bg-white p-8 shadow-sm">
+    <h1 class="mb-2 text-2xl font-semibold">Benefit Application</h1>
+    <p class="mb-6 text-sm text-slate-500">Step 3 of 3</p>
+
+    <form id="benefit-form-page3" onsubmit="event.preventDefault(); document.getElementById('success').classList.remove('hidden')">
+      <div class="space-y-4">
+        <div>
+          <label for="mobile" class="mb-1 block text-sm font-medium">Mobile Number</label>
+          <input id="mobile" name="mobile" required class="w-full rounded-xl border border-slate-300 px-4 py-2" />
+        </div>
+        <div>
+          <label for="scheme" class="mb-1 block text-sm font-medium">Scheme Name</label>
+          <input id="scheme" name="scheme" required class="w-full rounded-xl border border-slate-300 px-4 py-2" />
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="declaration_accept" name="declaration_accept" type="checkbox" required class="h-4 w-4" />
+          <label for="declaration_accept" class="text-sm">I declare the information is correct.</label>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-between">
+        <a href="page2.html" class="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-600">Back</a>
+        <button id="submit_btn" type="submit" class="rounded-xl bg-green-600 px-5 py-2.5 text-sm font-semibold text-white">Submit</button>
+      </div>
+    </form>
+
+    <div id="success" class="mt-6 hidden rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+      Application submitted successfully.
+    </div>
+  </div>
+</body>
+</html>

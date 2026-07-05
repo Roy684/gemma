@@ -79,6 +79,11 @@ const SERVICES: ServiceDef[] = [
     label: "Family Data Collection",
     match: /\b(family\s*data|family\s*registry|family\s*collection|family\s*form|family|registry|form)\b|परिवार\s*पंजीकरण|परिवार|फैमिली\s*फॉर्म|फैमिली|পারিবারিক\s*তথ্য|পরিবার|ফ্যামিলি\s*ফর্ম|ফ্যামিলি/i,
   },
+  {
+    key: "benefit_application",
+    label: "Benefit Application",
+    match: /\b(benefit|benefits|scheme|subsidy|application)\b|लाभ|योजना|सहायता|সুবিধা|আবেদন/i,
+  },
 ];
 
 function parseServiceKey(text: string): ServiceDef | null {
@@ -134,8 +139,9 @@ export default function EchoJSONApp() {
   const langRef = useRef<Lang | null>(null);
   const serviceKeyRef = useRef<string | null>(null);
   const serviceTitleRef = useRef<string>("");
-  // Portal URL for the currently active service, returned by /api/schema.
+  // Portal URL and ordered page list for the currently active service, returned by /api/schema.
   const targetUrlRef = useRef<string>("");
+  const targetPagesRef = useRef<string[]>([]);
   // Field schema extracted live from the target form by the Playwright backend.
   const schemaFieldsRef = useRef<Field[]>([]);
   // Raw, untranslated spoken answers collected turn-by-turn (native script).
@@ -907,6 +913,7 @@ JSON:`;
         serviceKeyRef.current = service.key;
         serviceTitleRef.current = json.title ?? service.label;
         targetUrlRef.current = json.url;
+        targetPagesRef.current = Array.isArray(json.pages) && json.pages.length ? json.pages : [json.url];
         schemaFieldsRef.current = fields;
         rawDataRef.current = {};
         dataRef.current = {};
@@ -1313,6 +1320,7 @@ JSON:`;
 
   const submitForm = useCallback(async () => {
     const url = targetUrlRef.current;
+    const pages = targetPagesRef.current.length ? targetPagesRef.current : [url];
     if (!url) return;
     try {
       // Step 9+10 of the architecture: send the confirmed JSON to Playwright,
@@ -1322,6 +1330,7 @@ JSON:`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url,
+          pages,
           data: dataRef.current,
         }),
       });
@@ -1465,6 +1474,7 @@ JSON:`;
     serviceKeyRef.current = null;
     serviceTitleRef.current = "";
     targetUrlRef.current = "";
+    targetPagesRef.current = [];
     schemaFieldsRef.current = [];
     langRef.current = null;
     rawDataRef.current = {};
@@ -1969,32 +1979,38 @@ JSON:`;
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 content-start">
-                {SERVICES.map((s, i) => (
-                  <button
-                    key={s.key}
-                    type="button"
-                    onClick={() => handleFormCardClick(s.key)}
-                    disabled={phase === "init"}
-                    className={`${glassCard} p-4 text-left flex flex-col gap-1 transition-all duration-150${
-                      i === 2 ? " col-span-2" : ""
-                    } ${phase === "init" ? "opacity-40 cursor-not-allowed" : "hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] cursor-pointer"}`}
-                    style={glassStyle}
-                  >
+              <div className="flex flex-col gap-3">
+                <div className="rounded-2xl border border-slate-200/70 bg-white/70 p-3 text-[11px] text-slate-600 shadow-sm">
+                  <p className="font-semibold text-slate-700">Choose a form</p>
+                  <p className="mt-1 text-slate-500">Tap a card or say the service name aloud.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 content-start">
+                  {SERVICES.map((s, i) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => handleFormCardClick(s.key)}
+                      disabled={phase === "init"}
+                      className={`${glassCard} p-4 text-left flex flex-col gap-1 transition-all duration-150${
+                        i === 2 ? " col-span-2" : ""
+                      } ${phase === "init" ? "opacity-40 cursor-not-allowed" : "hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] cursor-pointer"}`}
+                      style={glassStyle}
+                    >
                     <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-2 ${i === 0 ? "bg-blue-100" : i === 1 ? "bg-teal-100" : "bg-indigo-100"}`}>
                       <i className={`fa-solid fa-file-lines text-lg ${i === 0 ? "text-blue-600" : i === 1 ? "text-teal-600" : "text-indigo-600"}`} />
                     </div>
                     <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Government Services</p>
                     <h3 className="text-sm font-bold text-slate-800 leading-snug">{s.label}</h3>
                     <p className="text-[11px] text-slate-500 leading-relaxed">Fields are read live via Playwright.</p>
-                    <div
-                      className="mt-2 self-start text-xs font-medium text-slate-600 rounded-lg px-3 py-1.5"
-                      style={{ border: "1px solid rgba(203,213,225,0.9)", background: "rgba(255,255,255,0.5)" }}
-                    >
-                      {i === 2 ? "Start Session" : "Action Session"}
-                    </div>
-                  </button>
-                ))}
+                      <div
+                        className="mt-2 self-start text-xs font-medium text-slate-600 rounded-lg px-3 py-1.5"
+                        style={{ border: "1px solid rgba(203,213,225,0.9)", background: "rgba(255,255,255,0.5)" }}
+                      >
+                        {s.key === "benefit_application" ? "New Form" : i === 2 ? "Start Session" : "Action Session"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

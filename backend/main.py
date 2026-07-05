@@ -30,6 +30,15 @@ SERVICE_PORTAL_MAP = {
         "title": "Family Data Collection Form",
         "url": f"{BASE_URL}/dummy_forms/family_data_collection.html",
     },
+    "benefit_application": {
+        "title": "Benefit Application",
+        "url": f"{BASE_URL}/dummy_forms/benefit_application/page1.html",
+        "pages": [
+            f"{BASE_URL}/dummy_forms/benefit_application/page1.html",
+            f"{BASE_URL}/dummy_forms/benefit_application/page2.html",
+            f"{BASE_URL}/dummy_forms/benefit_application/page3.html",
+        ],
+    },
 }
 
 
@@ -112,24 +121,37 @@ SCHEMA_EXTRACTION_JS = """
 """
 
 
-def extract_schema(url):
-    """Navigate to `url` and pull out {id, label, type, required, options} for every field."""
-    launch_chrome_cdp(url)
+def extract_schema(url_or_urls):
+    """Navigate to one or more URLs and pull out field schemas from each page."""
+    urls = url_or_urls if isinstance(url_or_urls, list) else [url_or_urls]
+    launch_chrome_cdp(urls[0])
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
         if not browser.contexts:
             raise RuntimeError("No active browser contexts found.")
         context = browser.contexts[0]
-        page = _get_or_open_tab(context, url)
-        page.bring_to_front()
-        page.wait_for_load_state("domcontentloaded")
-        fields = page.evaluate(SCHEMA_EXTRACTION_JS)
-        return fields
+
+        all_fields = []
+        seen_ids = set()
+        for page_url in urls:
+            page = _get_or_open_tab(context, page_url)
+            page.bring_to_front()
+            page.wait_for_load_state("domcontentloaded")
+            fields = page.evaluate(SCHEMA_EXTRACTION_JS) or []
+            for field in fields:
+                if field.get("id") in seen_ids:
+                    continue
+                seen_ids.add(field.get("id"))
+                field["page_url"] = page_url
+                all_fields.append(field)
+
+        return all_fields
 
 
 # ─── Step 10 of the architecture: map JSON values onto the extracted field IDs ───
-def run_playwright_fill(url, data):
-    launch_chrome_cdp(url)
+def run_playwright_fill(url_or_urls, data):
+    urls = url_or_urls if isinstance(url_or_urls, list) else [url_or_urls]
+    launch_chrome_cdp(urls[0])
     TYPING_DELAY_MS = 60
 
     with sync_playwright() as p:
@@ -139,72 +161,117 @@ def run_playwright_fill(url, data):
                 print("Error: No active browser contexts found.")
                 return
             context = browser.contexts[0]
-            page = _get_or_open_tab(context, url)
-            page.bring_to_front()
-            page.wait_for_load_state("domcontentloaded")
 
-            # Multi-page filling loop: fill all visible fields, then click next_btn if visible,
-            # and repeat until all fields are filled. Works for both single and multi-page forms.
             filled_fields = set()
-            max_attempts = 15
-            
-            for attempt in range(max_attempts):
-                unfilled_visible_fields = []
-                for field_id, value in data.items():
-                    if field_id in filled_fields:
-                        continue
-                    if value is None or value == "":
-                        filled_fields.add(field_id)
-                        continue
-                    
-                    locator = page.locator(f"#{field_id}")
-                    if locator.count() > 0 and locator.first.is_visible():
-                        unfilled_visible_fields.append((field_id, value, locator.first))
-                
-                # Fill all currently visible fields
-                for field_id, value, element in unfilled_visible_fields:
-                    tag = element.evaluate("el => el.tagName.toLowerCase()")
-                    type_attr = (element.evaluate("el => el.type || ''") or "").lower()
-                    print(f"Filling #{field_id} ({tag}/{type_attr}) = {value!r}")
-                    
-                    if tag == "select":
-                        try:
-                            element.select_option(label=str(value))
-                        except Exception:
-                            try:
-                                element.select_option(value=str(value))
-                            except Exception as e:
-                                print(f"  Could not select option for #{field_id}: {e}")
-                    elif type_attr in ("checkbox", "radio"):
-                        if str(value).lower() in ("yes", "true", "1", "accepted", "agree", "on"):
-                            element.check()
-                    else:
-                        element.click()
-                        element.fill("")
-                        element.press_sequentially(str(value), delay=TYPING_DELAY_MS)
-                    
-                    filled_fields.add(field_id)
-                
-                # Check if we are done
-                remaining = [f for f in data.keys() if f not in filled_fields]
-                if not remaining:
-                    print("All fields filled! Ready to submit.")
-                    break
-                
-                # If there are still unfilled fields, check if we need to navigate to the next page
-                next_btn = page.locator("#next_btn")
-                if next_btn.count() > 0 and next_btn.first.is_visible():
-                    print("Clicking #next_btn to go to the next page...")
-                    next_btn.first.click()
-                    page.wait_for_timeout(600) # wait for step transition animation
-                else:
-                    print("No visible #next_btn found but fields remain unfilled. Breaking...")
-                    break
 
-            submit_btn = page.locator("#submit_btn")
-            if submit_btn.count() > 0 and submit_btn.first.is_visible():
-                print("Clicking #submit_btn...")
-                submit_btn.first.click()
+            if len(urls) > 1:
+                for idx, page_url in enumerate(urls):
+                    page = _get_or_open_tab(context, page_url)
+                    page.bring_to_front()
+                    page.wait_for_load_state("domcontentloaded")
+
+                    for field_id, value in data.items():
+                        if field_id in filled_fields:
+                            continue
+                        if value is None or value == "":
+                            filled_fields.add(field_id)
+                            continue
+
+                        locator = page.locator(f"#{field_id}")
+                        if locator.count() > 0 and locator.first.is_visible():
+                            tag = locator.first.evaluate("el => el.tagName.toLowerCase()")
+                            type_attr = (locator.first.evaluate("el => el.type || ''") or "").lower()
+                            print(f"Filling #{field_id} on {page_url} ({tag}/{type_attr}) = {value!r}")
+
+                            if tag == "select":
+                                try:
+                                    locator.first.select_option(label=str(value))
+                                except Exception:
+                                    try:
+                                        locator.first.select_option(value=str(value))
+                                    except Exception as e:
+                                        print(f"  Could not select option for #{field_id}: {e}")
+                            elif type_attr in ("checkbox", "radio"):
+                                if str(value).lower() in ("yes", "true", "1", "accepted", "agree", "on"):
+                                    locator.first.check()
+                            else:
+                                locator.first.click()
+                                locator.first.fill("")
+                                locator.first.press_sequentially(str(value), delay=TYPING_DELAY_MS)
+
+                            filled_fields.add(field_id)
+
+                    if idx < len(urls) - 1:
+                        print(f"Navigating to next page: {urls[idx + 1]}")
+                        page.goto(urls[idx + 1])
+                        page.wait_for_load_state("domcontentloaded")
+
+                submit_btn = page.locator("#submit_btn")
+                if submit_btn.count() > 0 and submit_btn.first.is_visible():
+                    print("Clicking #submit_btn...")
+                    submit_btn.first.click()
+            else:
+                page = _get_or_open_tab(context, urls[0])
+                page.bring_to_front()
+                page.wait_for_load_state("domcontentloaded")
+
+                # Multi-step filling loop: fill all visible fields, then click next_btn if visible,
+                # and repeat until all fields are filled. Works for single-page multi-step forms.
+                max_attempts = 15
+                for attempt in range(max_attempts):
+                    unfilled_visible_fields = []
+                    for field_id, value in data.items():
+                        if field_id in filled_fields:
+                            continue
+                        if value is None or value == "":
+                            filled_fields.add(field_id)
+                            continue
+
+                        locator = page.locator(f"#{field_id}")
+                        if locator.count() > 0 and locator.first.is_visible():
+                            unfilled_visible_fields.append((field_id, value, locator.first))
+
+                    for field_id, value, element in unfilled_visible_fields:
+                        tag = element.evaluate("el => el.tagName.toLowerCase()")
+                        type_attr = (element.evaluate("el => el.type || ''") or "").lower()
+                        print(f"Filling #{field_id} ({tag}/{type_attr}) = {value!r}")
+
+                        if tag == "select":
+                            try:
+                                element.select_option(label=str(value))
+                            except Exception:
+                                try:
+                                    element.select_option(value=str(value))
+                                except Exception as e:
+                                    print(f"  Could not select option for #{field_id}: {e}")
+                        elif type_attr in ("checkbox", "radio"):
+                            if str(value).lower() in ("yes", "true", "1", "accepted", "agree", "on"):
+                                element.check()
+                        else:
+                            element.click()
+                            element.fill("")
+                            element.press_sequentially(str(value), delay=TYPING_DELAY_MS)
+
+                        filled_fields.add(field_id)
+
+                    remaining = [f for f in data.keys() if f not in filled_fields]
+                    if not remaining:
+                        print("All fields filled! Ready to submit.")
+                        break
+
+                    next_btn = page.locator("#next_btn")
+                    if next_btn.count() > 0 and next_btn.first.is_visible():
+                        print("Clicking #next_btn to go to the next page...")
+                        next_btn.first.click()
+                        page.wait_for_timeout(600)
+                    else:
+                        print("No visible #next_btn found but fields remain unfilled. Breaking...")
+                        break
+
+                submit_btn = page.locator("#submit_btn")
+                if submit_btn.count() > 0 and submit_btn.first.is_visible():
+                    print("Clicking #submit_btn...")
+                    submit_btn.first.click()
 
             print("Automation completed successfully.")
 
@@ -255,12 +322,14 @@ class AutomationHTTPServer(SimpleHTTPRequestHandler):
                     self._send_json(404, {"error": f"Unknown service '{service}'"})
                     return
 
-                print(f"\n[HTTP Server] Extracting schema for service='{service}' url={meta['url']}")
-                fields = extract_schema(meta["url"])
+                target_urls = meta.get("pages") or [meta["url"]]
+                print(f"\n[HTTP Server] Extracting schema for service='{service}' urls={target_urls}")
+                fields = extract_schema(target_urls)
                 self._send_json(200, {
                     "service": service,
                     "title": meta["title"],
-                    "url": meta["url"],
+                    "url": target_urls[0],
+                    "pages": target_urls,
                     "fields": fields,
                 })
             except Exception as e:
@@ -272,13 +341,15 @@ class AutomationHTTPServer(SimpleHTTPRequestHandler):
             try:
                 payload = self._read_json_body()
                 url = payload.get("url")
+                pages = payload.get("pages")
                 data = payload.get("data", {})
-                if not url:
-                    self._send_json(400, {"error": "Missing 'url'"})
+                target_urls = pages or url
+                if not target_urls:
+                    self._send_json(400, {"error": "Missing 'url' or 'pages'"})
                     return
 
-                print(f"\n[HTTP Server] Received automation trigger for url={url} data={data}")
-                threading.Thread(target=run_playwright_fill, args=(url, data)).start()
+                print(f"\n[HTTP Server] Received automation trigger for urls={target_urls} data={data}")
+                threading.Thread(target=run_playwright_fill, args=(target_urls, data)).start()
                 self._send_json(200, {"status": "success", "message": "Automation triggered successfully."})
             except Exception as e:
                 self._send_json(500, {"error": str(e)})

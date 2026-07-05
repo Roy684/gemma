@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Benefit Application - Step 2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-100 p-6 text-slate-800">
+  <div class="mx-auto max-w-2xl rounded-3xl bg-white p-8 shadow-sm">
+    <h1 class="mb-2 text-2xl font-semibold">Benefit Application</h1>
+    <p class="mb-6 text-sm text-slate-500">Step 2 of 3</p>
+
+    <form id="benefit-form-page2" onsubmit="event.preventDefault(); window.location.href='page3.html'">
+      <div class="space-y-4">
+        <div>
+          <label for="address" class="mb-1 block text-sm font-medium">Address</label>
+          <textarea id="address" name="address" required rows="3" class="w-full rounded-xl border border-slate-300 px-4 py-2"></textarea>
+        </div>
+        <div>
+          <label for="district" class="mb-1 block text-sm font-medium">District</label>
+          <input id="district" name="district" required class="w-full rounded-xl border border-slate-300 px-4 py-2" />
+        </div>
+        <div>
+          <label for="pincode" class="mb-1 block text-sm font-medium">Pincode</label>
+          <input id="pincode" name="pincode" required class="w-full rounded-xl border border-slate-300 px-4 py-2" />
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-between">
+        <a href="page1.html" class="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-600">Back</a>
+        <button id="next_btn" type="submit" class="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white">Next</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>
