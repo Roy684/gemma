@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dummy Portal — Ration Card Application</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f172a; color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-6">
+
+  <div class="w-full max-w-md p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl">
+    <h2 class="text-xl font-bold text-white mb-1">Ration Card Application</h2>
+    <p class="text-xs text-slate-400 mb-6">Dummy stand-in for a state Food &amp; Civil Supplies portal.</p>
+
+    <form id="ration-card-form" onsubmit="handleSubmit(event)" class="space-y-4">
+
+      <div>
+        <label for="applicant_name" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Applicant Full Name</label>
+        <input type="text" id="applicant_name" name="applicant_name" required placeholder="As per Aadhaar"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div>
+        <label for="father_husband_name" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Father's / Husband's Name</label>
+        <input type="text" id="father_husband_name" name="father_husband_name" required placeholder="Full name"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div>
+        <label for="aadhaar_number" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Aadhaar Number</label>
+        <input type="text" id="aadhaar_number" name="aadhaar_number" required placeholder="12-digit Aadhaar number" pattern="\d{12}"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div>
+        <label for="mobile_number" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Mobile Number</label>
+        <input type="tel" id="mobile_number" name="mobile_number" required placeholder="10-digit mobile number"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div>
+        <label for="state" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">State</label>
+        <select id="state" name="state" required
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 focus:outline-none focus:border-indigo-500 transition">
+          <option value="">Select State</option>
+          <option value="West Bengal">West Bengal</option>
+          <option value="Maharashtra">Maharashtra</option>
+          <option value="Delhi">Delhi</option>
+          <option value="Karnataka">Karnataka</option>
+          <option value="Tamil Nadu">Tamil Nadu</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="district" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">District</label>
+        <input type="text" id="district" name="district" required placeholder="Enter district"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div>
+        <label for="address" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Full Address</label>
+        <textarea id="address" name="address" required rows="2" placeholder="House no., street, locality"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition"></textarea>
+      </div>
+
+      <div>
+        <label for="category" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Card Category</label>
+        <select id="category" name="category" required
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 focus:outline-none focus:border-indigo-500 transition">
+          <option value="">Select Category</option>
+          <option value="APL">APL (Above Poverty Line)</option>
+          <option value="BPL">BPL (Below Poverty Line)</option>
+          <option value="AAY">AAY (Antyodaya Anna Yojana)</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="family_members" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Number of Family Members</label>
+        <input type="number" id="family_members" name="family_members" required min="1" placeholder="e.g. 4"
+          class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <div class="pt-4">
+        <button id="submit_btn" type="submit"
+          class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-white tracking-wide transition shadow-lg shadow-indigo-600/20 active:scale-95">
+          Submit Application
+        </button>
+      </div>
+    </form>
+
+  </div>
+
+  <script>
+    function handleSubmit(e) {
+      e.preventDefault();
+      const form = document.getElementById('ration-card-form');
+      if (form.reportValidity()) {
+        window.location.reload();
+      }
+    }
+  </script>
+</body>
+</html>
