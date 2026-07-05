@@ -39,10 +39,21 @@ type Field = {
   placeholder?: string;
   options?: string[];
 };
-type ChatMsg = { id: string; role: "agent" | "user"; text: string };
+type ChatMsg = { id: string; role: "agent" | "user"; text: string; isText?: boolean };
 
 let _mid = 0;
 const uid = () => `m${++_mid}`;
+
+function pseudoWaveform(seed: string, bars = 18): number[] {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const out: number[] = [];
+  for (let i = 0; i < bars; i++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    out.push(25 + (h % 75));
+  }
+  return out;
+}
 
 // ─── Government Service Directory ──────────────────────────────────────────────
 // This is voice-matching metadata only. The backend owns the service -> URL
@@ -161,8 +172,8 @@ export default function EchoJSONApp() {
     setPhase(p);
   }, []);
 
-  const addMsg = useCallback((role: "agent" | "user", text: string) => {
-    setChat((prev) => [...prev, { id: uid(), role, text }]);
+  const addMsg = useCallback((role: "agent" | "user", text: string, isText = false) => {
+    setChat((prev) => [...prev, { id: uid(), role, text, isText }]);
   }, []);
 
   // ── TTS ─────────────────────────────────────────────────────────────────────
@@ -355,7 +366,11 @@ export default function EchoJSONApp() {
         ctx.beginPath();
         for (let x = 0; x <= w; x += 2) {
           const y = cy + Math.sin(x * freq + t * speed) * amp;
-          x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          if (x === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
         }
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
@@ -1032,7 +1047,7 @@ JSON:`;
         setFormData(translated);
 
         const summary = buildSummary(serviceTitleRef.current, fields, translated, l);
-        addMsg("agent", summary);
+        addMsg("agent", summary, true);
         syncPhase("await_confirm");
         speakText(summary, l, () => startRecordingRef.current?.());
         return;
@@ -1052,7 +1067,7 @@ JSON:`;
 
         if (analysis.isConfirm) {
           const resp = PHRASES.submitSuccess[l];
-          addMsg("agent", resp);
+          addMsg("agent", resp, true);
           syncPhase("done");
           activeFieldIdRef.current = null;
           speakText(resp, l);
@@ -1143,7 +1158,7 @@ JSON:`;
         setCorrFieldId(null);
         const summary = buildSummary(serviceTitleRef.current, fields, newData, l);
         const resp = `${PHRASES.updatedField[l](field.label, effectiveEnglish)} ${summary}`;
-        addMsg("agent", resp);
+        addMsg("agent", resp, true);
         syncPhase("await_confirm");
         speakText(resp, l, () => startRecordingRef.current?.());
         return;
@@ -1641,19 +1656,67 @@ JSON:`;
 
               {chat.map((msg) => {
                 const isUser = msg.role === "user";
+                if (msg.isText) {
+                  return (
+                    <div key={msg.id} className={isUser ? "flex justify-end" : "flex justify-start"}>
+                      <div
+                        className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                          isUser
+                            ? "bg-green-500 text-white rounded-br-md"
+                            : "bg-white/80 border border-slate-200 text-slate-700 rounded-bl-md shadow-sm"
+                        }`}
+                      >
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-60 mb-1">
+                          {isUser ? "You" : "Agent"}
+                        </p>
+                        <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Render as WhatsApp style voice note bubble
+                const bars = pseudoWaveform(msg.id);
+                const durationSec = Math.max(
+                  1,
+                  Math.min(28, Math.round(msg.text.length / 13))
+                );
                 return (
                   <div key={msg.id} className={isUser ? "flex justify-end" : "flex justify-start"}>
                     <div
-                      className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                      className={`flex items-center gap-3 px-4 py-2.5 rounded-full max-w-[80%] ${
                         isUser
-                          ? "bg-green-500 text-white rounded-br-md"
-                          : "bg-white/80 border border-slate-200 text-slate-700 rounded-bl-md shadow-sm"
+                          ? "bg-green-500 text-white rounded-tr-xl rounded-l-full rounded-br-sm shadow-sm"
+                          : "bg-white border border-slate-200 text-slate-700 rounded-tl-xl rounded-r-full rounded-bl-sm shadow-sm"
                       }`}
                     >
-                      <p className="text-[10px] font-bold uppercase tracking-wider opacity-60 mb-1">
-                        {isUser ? "You" : "Agent"}
-                      </p>
-                      <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                        isUser ? "bg-white/20 text-white" : "bg-green-50 text-green-600"
+                      }`}>
+                        <i className="fa-solid fa-play text-xs pl-[2px]" />
+                      </div>
+                      
+                      <div className="flex items-end gap-[2px] h-5 shrink-0 select-none">
+                        {bars.map((h: number, idx: number) => (
+                          <span
+                            key={idx}
+                            className={`w-[2px] rounded-full ${
+                              isUser ? "bg-white/80" : "bg-slate-400"
+                            }`}
+                            style={{ height: `${h}%` }}
+                          />
+                        ))}
+                      </div>
+
+                      <span className={`text-[10px] font-mono shrink-0 ${isUser ? "text-white/70" : "text-slate-400"}`}>
+                        0:{durationSec < 10 ? `0${durationSec}` : durationSec}
+                      </span>
+
+                      <i
+                        className={`fa-solid ${
+                          isUser ? "fa-microphone" : "fa-robot"
+                        } text-[10px] shrink-0 opacity-60`}
+                      />
                     </div>
                   </div>
                 );
