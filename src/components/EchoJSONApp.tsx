@@ -147,6 +147,7 @@ export default function EchoJSONApp() {
   const corrFieldRef = useRef<Field | null>(null);
   // ID of field currently being filled (drives real-time streaming into form)
   const activeFieldIdRef = useRef<string | null>(null);
+  const spokenQuestionsRef = useRef<Record<string, string>>({});
 
   // ── React state (for rendering) ────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>("init");
@@ -925,6 +926,94 @@ JSON:`;
     []
   );
 
+  const generateSpokenQuestions = useCallback(
+    async (fields: Field[], speakLang: Lang) => {
+      const processor = processorRef.current;
+      const model = modelRef.current;
+      const Streamer = StreamerRef.current;
+
+      const setFallback = () => {
+        const mapping: Record<string, string> = {};
+        for (const f of fields) {
+          mapping[f.id] = fieldQuestion(speakLang, f.id, f.label);
+        }
+        spokenQuestionsRef.current = mapping;
+      };
+
+      if (!processor || !model || !Streamer) {
+        setFallback();
+        return;
+      }
+
+      try {
+        const langName =
+          speakLang === "en" ? "English" : speakLang === "hi" ? "Hindi" : "Bengali";
+        const fieldLines = fields
+          .map(
+            (f) =>
+              `- id: "${f.id}", label: "${f.label}", options: ${
+                f.options && f.options.length > 0
+                  ? JSON.stringify(f.options)
+                  : "none"
+              }`
+          )
+          .join("\n");
+
+        const promptContent = `You are a voice assistant. Generate spoken questions for these form fields in ${langName}.
+Guidelines:
+1. Simplify labels: strip asterisks (*), colons, brackets, and robotic terms.
+2. If a field label or instructions contain a long English sentence (more than 5 words), output it first in English, and then repeat a translation/explanation in ${langName} so the user understands.
+3. Otherwise, for short fields, output the question directly in ${langName}.
+4. Respond with STRICT JSON mapping each field 'id' to its spoken question. No markdown formatting, no code fences.
+
+Fields:
+${fieldLines}
+
+JSON:`;
+
+        const msgs = [{ role: "user", content: promptContent }];
+        const prompt = processor.apply_chat_template(msgs, {
+          add_generation_prompt: true,
+        });
+        const inputs = await processor(prompt, null, null, {
+          add_special_tokens: false,
+        });
+
+        let out = "";
+        const streamer = new Streamer(processor.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (chunk: string) => {
+            out += chunk;
+          },
+        });
+        await model.generate({
+          ...inputs,
+          max_new_tokens: Math.max(150, fields.length * 45),
+          temperature: 0.05,
+          do_sample: false,
+          streamer,
+        });
+
+        const match = out.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error("JSON not found");
+        const parsed = JSON.parse(match[0]);
+
+        const mapping: Record<string, string> = {};
+        for (const f of fields) {
+          const q = parsed[f.id];
+          mapping[f.id] =
+            typeof q === "string" && q.trim() ? q.trim() : fieldQuestion(speakLang, f.id, f.label);
+        }
+        spokenQuestionsRef.current = mapping;
+      } catch (err) {
+        console.warn("Spoken questions generation failed, using fallback", err);
+        setFallback();
+      }
+    },
+    []
+  );
+
   const initiateServiceSelection = useCallback((service: ServiceDef) => {
     window.speechSynthesis?.cancel();
     stopCloudTts(cloudAudioRef);
@@ -979,12 +1068,16 @@ JSON:`;
     }
 
     const fields = schemaFieldsRef.current;
-    const q = fieldQuestion(l, fields[0].id, fields[0].label);
+    
+    // Pre-generate conversational spoken questions for all fields in one batch in the background
+    await generateSpokenQuestions(fields, l);
+
+    const q = spokenQuestionsRef.current[fields[0].id] || fieldQuestion(l, fields[0].id, fields[0].label);
     const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
     addMsg("agent", resp);
     syncPhase("collecting");
     speakText(resp, l, () => startRecordingRef.current?.());
-  }, [selectedService, fetchServiceSchema, speakText, addMsg, syncPhase]);
+  }, [selectedService, fetchServiceSchema, speakText, addMsg, syncPhase, generateSpokenQuestions]);
 
   // ── Dialogue State Machine ───────────────────────────────────────────────────
 
@@ -1053,7 +1146,7 @@ JSON:`;
         // extraction (and option matching) happens once, for every field
         // at once, right after the last question is answered.
         if (isUnclearTranscript(rawText)) {
-          const q = fieldQuestion(l, field.id, field.label);
+          const q = spokenQuestionsRef.current[field.id] || fieldQuestion(l, field.id, field.label);
           const resp = `${PHRASES.didntCatch[l]} ${q}`;
           addMsg("agent", resp);
           activeFieldIdRef.current = field.id;
@@ -1069,7 +1162,7 @@ JSON:`;
           fieldIdxRef.current = nextIdx;
           activeFieldIdRef.current = fields[nextIdx].id;
           setFieldIdx(nextIdx);
-          const q = fieldQuestion(l, fields[nextIdx].id, fields[nextIdx].label);
+          const q = spokenQuestionsRef.current[fields[nextIdx].id] || fieldQuestion(l, fields[nextIdx].id, fields[nextIdx].label);
           const resp = PHRASES.gotItNext[l](q);
           addMsg("agent", resp);
           speakText(resp, l, () => startRecordingRef.current?.());

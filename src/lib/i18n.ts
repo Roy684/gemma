@@ -320,7 +320,8 @@ const GENERIC_FIELD_QUESTION: Record<Lang, (label: string) => string> = {
  * the schema itself gave us (e.g. "aadhaar_number" -> "Aadhaar Number").
  */
 export function fieldQuestion(lang: Lang, fieldId: string, fallbackLabel: string): string {
-  return FIELD_QUESTIONS[lang][fieldId] ?? GENERIC_FIELD_QUESTION[lang](fallbackLabel);
+  const cleaned = fallbackLabel.replace(/[*:]/g, "").replace(/\s*\(Required\)/gi, "").trim();
+  return FIELD_QUESTIONS[lang][fieldId] ?? GENERIC_FIELD_QUESTION[lang](cleaned);
 }
 
 export function matchFieldMultilingual(
