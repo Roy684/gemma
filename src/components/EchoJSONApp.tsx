@@ -158,6 +158,11 @@ export default function EchoJSONApp() {
   const [corrFieldId, setCorrFieldId] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMsg[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [selectedService, setSelectedService] = useState<ServiceDef | null>(null);
+  const [showOpenModal, setShowOpenModal] = useState(false);
+  const [showCaptchaModal, setShowCaptchaModal] = useState(false);
+  const [captchaChecked, setCaptchaChecked] = useState(false);
+  const [captchaSpinning, setCaptchaSpinning] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const [dlPct, setDlPct] = useState(0);
@@ -920,6 +925,67 @@ JSON:`;
     []
   );
 
+  const initiateServiceSelection = useCallback((service: ServiceDef) => {
+    window.speechSynthesis?.cancel();
+    stopCloudTts(cloudAudioRef);
+    setIsRecording(false);
+    setAgentSpeaking(false);
+
+    setSelectedService(service);
+    setShowOpenModal(true);
+    setShowCaptchaModal(false);
+    setCaptchaChecked(false);
+    setCaptchaSpinning(false);
+  }, []);
+
+  const handleCaptchaClick = useCallback(() => {
+    if (captchaChecked || captchaSpinning) return;
+    setCaptchaSpinning(true);
+    setTimeout(() => {
+      setCaptchaSpinning(false);
+      setCaptchaChecked(true);
+    }, 1200);
+  }, [captchaChecked, captchaSpinning]);
+
+  const confirmAndLoadService = useCallback(async () => {
+    setShowCaptchaModal(false);
+    if (!selectedService) return;
+
+    const service = selectedService;
+    setSelectedService(null);
+
+    // If language not chosen yet, pick English by default then open form
+    const l = langRef.current ?? "en";
+    if (!langRef.current) {
+      langRef.current = "en";
+      setLang("en");
+    }
+
+    corrFieldRef.current = null;
+    setCorrFieldId(null);
+
+    const loadingMsg = PHRASES.loadingSchema[l](service.label);
+    addMsg("agent", loadingMsg);
+    syncPhase("loading_schema");
+    speakText(loadingMsg, l);
+
+    const ok = await fetchServiceSchema(service);
+    if (!ok) {
+      const resp = PHRASES.schemaLoadFailed[l];
+      addMsg("agent", resp);
+      syncPhase("ready");
+      speakText(resp, l);
+      return;
+    }
+
+    const fields = schemaFieldsRef.current;
+    const q = fieldQuestion(l, fields[0].id, fields[0].label);
+    const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
+    addMsg("agent", resp);
+    syncPhase("collecting");
+    speakText(resp, l, () => startRecordingRef.current?.());
+  }, [selectedService, fetchServiceSchema, speakText, addMsg, syncPhase]);
+
   // ── Dialogue State Machine ───────────────────────────────────────────────────
 
   const processTranscription = useCallback(
@@ -972,28 +1038,7 @@ JSON:`;
           return;
         }
 
-        // Step 3+5 of the architecture: resolve service -> portal URL, then
-        // have Playwright extract that page's live field schema.
-        const loadingMsg = PHRASES.loadingSchema[l](service.label);
-        addMsg("agent", loadingMsg);
-        syncPhase("loading_schema");
-        speakText(loadingMsg, l);
-
-        const ok = await fetchServiceSchema(service);
-        if (!ok) {
-          const resp = PHRASES.schemaLoadFailed[l];
-          addMsg("agent", resp);
-          syncPhase("await_form");
-          speakText(resp, l, () => startRecordingRef.current?.());
-          return;
-        }
-
-        const fields = schemaFieldsRef.current;
-        const q = fieldQuestion(l, fields[0].id, fields[0].label);
-        const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
-        addMsg("agent", resp);
-        syncPhase("collecting");
-        speakText(resp, l, () => startRecordingRef.current?.());
+        initiateServiceSelection(service);
         return;
       }
 
@@ -1164,7 +1209,7 @@ JSON:`;
         return;
       }
     },
-    [addMsg, speakSequence, speakText, syncPhase, fetchServiceSchema, translateAndExtractEntities, analyzeConfirmation]
+    [addMsg, speakSequence, speakText, syncPhase, fetchServiceSchema, translateAndExtractEntities, analyzeConfirmation, initiateServiceSelection]
   );
 
   useEffect(() => {
@@ -1307,38 +1352,9 @@ JSON:`;
       const service = SERVICES.find((s) => s.key === key);
       if (!service) return;
 
-      // If language not chosen yet, pick English by default then open form
-      const l = langRef.current ?? "en";
-      if (!langRef.current) {
-        langRef.current = "en";
-        setLang("en");
-      }
-
-      corrFieldRef.current = null;
-      setCorrFieldId(null);
-
-      const loadingMsg = PHRASES.loadingSchema[l](service.label);
-      addMsg("agent", loadingMsg);
-      syncPhase("loading_schema");
-      speakText(loadingMsg, l);
-
-      const ok = await fetchServiceSchema(service);
-      if (!ok) {
-        const resp = PHRASES.schemaLoadFailed[l];
-        addMsg("agent", resp);
-        syncPhase("ready");
-        speakText(resp, l);
-        return;
-      }
-
-      const fields = schemaFieldsRef.current;
-      const q = fieldQuestion(l, fields[0].id, fields[0].label);
-      const resp = PHRASES.openingForm[l](1, serviceTitleRef.current, q);
-      addMsg("agent", resp);
-      syncPhase("collecting");
-      speakText(resp, l, () => startRecordingRef.current?.());
+      initiateServiceSelection(service);
     },
-    [addMsg, speakText, syncPhase, fetchServiceSchema]
+    [initiateServiceSelection]
   );
 
   const handleReset = useCallback(() => {
@@ -1865,6 +1881,113 @@ JSON:`;
           </div>
         </main>
       </div>
+
+      {/* Pop-up Modal 1: Open Form notification */}
+      {showOpenModal && selectedService && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full mx-4 shadow-2xl border border-slate-100 flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                <i className="fa-solid fa-circle-info text-xl" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">{selectedService.label} Form</h3>
+                <p className="text-[10px] uppercase font-bold tracking-wide text-slate-400">Portal Request</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              A security verification layer has been detected on the portal. Please click <strong>Open</strong> to view the security check interface.
+            </p>
+            <div className="flex gap-3 justify-end mt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOpenModal(false);
+                  setSelectedService(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOpenModal(false);
+                  setShowCaptchaModal(true);
+                }}
+                className="px-6 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition shadow-md shadow-blue-500/20 active:scale-95"
+              >
+                Open
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Modal 2: ReCAPTCHA Mimic with OK button */}
+      {showCaptchaModal && selectedService && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-xs w-full mx-4 shadow-2xl border border-slate-100 flex flex-col gap-5">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
+                <i className="fa-solid fa-shield-halved text-xl" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Portal Verification</h3>
+                <p className="text-[10px] uppercase font-bold tracking-wide text-slate-400">Security Check</p>
+              </div>
+            </div>
+
+            {/* Google ReCAPTCHA Mimic */}
+            <div 
+              onClick={handleCaptchaClick}
+              className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex items-center justify-between shadow-inner cursor-pointer hover:bg-slate-100/50 transition-colors"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-6 h-6 rounded border border-slate-300 bg-white flex items-center justify-center select-none shrink-0 shadow-sm">
+                  {captchaSpinning && (
+                    <i className="fa-solid fa-circle-notch fa-spin text-xs text-blue-500" />
+                  )}
+                  {captchaChecked && (
+                    <i className="fa-solid fa-check text-green-600 text-sm font-bold" />
+                  )}
+                </div>
+                <span className="text-xs font-semibold text-slate-700 select-none">I&apos;m not a robot</span>
+              </div>
+              <div className="flex flex-col items-center gap-0.5 opacity-80 shrink-0 text-slate-400">
+                <i className="fa-solid fa-arrows-spin text-lg text-blue-500 animate-spin" style={{ animationDuration: '4s' }} />
+                <span className="text-[7px] tracking-wider uppercase font-bold">Secure</span>
+                <span className="text-[6px]">reCAPTCHA</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCaptchaModal(false);
+                  setSelectedService(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!captchaChecked}
+                onClick={confirmAndLoadService}
+                className={`px-6 py-2 rounded-xl text-xs font-bold text-white transition-all duration-150 ${
+                  !captchaChecked
+                    ? "bg-slate-300 cursor-not-allowed shadow-none"
+                    : "bg-green-600 hover:bg-green-700 active:scale-95 shadow-md shadow-green-500/20"
+                }`}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
