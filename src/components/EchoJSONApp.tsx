@@ -1485,6 +1485,21 @@ JSON:`;
     syncPhase("ready");
   }, [syncPhase]);
 
+  const handleConfirmClick = useCallback(async () => {
+    window.speechSynthesis?.cancel();
+    stopCloudTts(cloudAudioRef);
+    setIsRecording(false);
+    setAgentSpeaking(false);
+
+    const l = langRef.current ?? "en";
+    const resp = PHRASES.submitSuccess[l];
+    addMsg("agent", resp, true);
+    syncPhase("done");
+    activeFieldIdRef.current = null;
+    speakText(resp, l);
+    await submitFormRef.current?.();
+  }, [addMsg, speakText, syncPhase]);
+
   // ── Derived state for render ──────────────────────────────────────────────────
 
   const allFields = schemaFields;
@@ -1833,7 +1848,18 @@ JSON:`;
               <div ref={chatEndRef} />
             </div>
 
-            <div className="shrink-0 flex flex-col items-center gap-2 relative z-10">
+            <div className="shrink-0 flex flex-col items-center gap-2 relative z-10 w-full">
+              {phase === "await_confirm" && (
+                <button
+                  type="button"
+                  onClick={handleConfirmClick}
+                  className="mb-2 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-bold rounded-xl px-10 py-3 text-sm transition-all duration-150 shadow-md flex items-center gap-2"
+                  style={{ boxShadow: "0 4px 14px rgba(16,185,129,0.35)" }}
+                >
+                  <i className="fa-solid fa-circle-check text-base animate-pulse" />
+                  Confirm &amp; Submit Form
+                </button>
+              )}
               <button
                 type="button"
                 disabled={centerButtonDisabled}
