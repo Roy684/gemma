@@ -1617,7 +1617,7 @@ JSON:`;
                 <div key={i} className="w-[3px] rounded-full bg-slate-700" style={{ height: `${h * 3}px` }} />
               ))}
             </div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">EchoJSON</h1>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Vaani</h1>
           </div>
           <div className="flex items-center gap-2">
             {lang && (

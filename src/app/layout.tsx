@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EchoJSON — On-Device WebGPU Audio Inference",
+  title: "Vaani — On-Device WebGPU Audio Inference",
   description:
     "A premium on-device WebGPU-accelerated JSON entity extraction from live audio using Transformers.js v3 and Google's Gemma 4 E2B model.",
   keywords: [

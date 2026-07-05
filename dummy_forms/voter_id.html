@@ -72,24 +72,15 @@
       </div>
     </form>
 
-    <div id="result-card" class="hidden mt-6 p-4 rounded-2xl bg-emerald-950/40 border border-emerald-900/40 text-emerald-300 text-xs space-y-2">
-      <div class="flex items-center gap-1.5 font-bold text-white">
-        <svg class="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>Application Received!</span>
-      </div>
-      <p id="result-details" class="font-mono whitespace-pre-wrap"></p>
-    </div>
   </div>
 
   <script>
     function handleSubmit(e) {
       e.preventDefault();
       const form = document.getElementById('voter-id-form');
-      const data = Object.fromEntries(new FormData(form).entries());
-      document.getElementById('result-details').textContent = JSON.stringify(data, null, 2);
-      document.getElementById('result-card').classList.remove('hidden');
+      if (form.reportValidity()) {
+        window.location.reload();
+      }
     }
   </script>
 </body>
